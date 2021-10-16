@@ -4,6 +4,7 @@ const vkgen = deps.imports.vulkan_zig;
 const Step = std.build.Step;
 const Builder = std.build.Builder;
 const LibExeObjStep = std.build.LibExeObjStep;
+const Pkg = std.build.Pkg;
 
 pub const ResourceGenStep = struct {
     step: Step,
@@ -77,6 +78,7 @@ pub const ResourceGenStep = struct {
 };
 pub fn linkGlfw(b: *LibExeObjStep) void {
     const glfw = b.builder.addStaticLibrary("glfw", null);
+    const glfw_path = "./external/glfw/";
     const src_files = .{
         "context.c",
         "egl_context.c",
@@ -98,15 +100,15 @@ pub fn linkGlfw(b: *LibExeObjStep) void {
         "null_monitor.c",
         "null_window.c",
         "null_joystick.c",
-        "platform.c"
+        "platform.c",
     };
-    inline for(src_files) |f|{
-        glfw.addCSourceFile("external/src/" ++ f, &.{});
+    inline for (src_files) |f| {
+        glfw.addCSourceFile(glfw_path ++ "src/" ++ f, &.{});
     }
     glfw.linkLibC();
-    glfw.addIncludeDir("external/src");
+    glfw.addIncludeDir(glfw_path ++ "src");
     glfw.defineCMacro("_GLFW_WIN32", null);
-    b.addIncludeDir("external/include");
+    b.addIncludeDir(glfw_path ++ "include");
     b.linkLibrary(glfw);
 }
 
@@ -123,13 +125,26 @@ pub fn build(b: *Builder) void {
     linkGlfw(triangle_exe);
 
     const vk_sdk_path = b.option([]const u8, "vulkan-sdk", "Path to vulkan sdk");
-    const gen = if (vk_sdk_path) |path| vkgen.VkGenerateStep.initFromSdk(b, path, "vk.zig") else unreachable;
-    triangle_exe.addPackage(gen.package);
+    const gen = if (vk_sdk_path) |path|
+        vkgen.VkGenerateStep.initFromSdk(b, path, "vk.zig").package
+    else
+        Pkg{ .name = "vulkan", .path = .{ .path = "zig-cache/vk.zig" }, .dependencies = null };
 
-    const res = ResourceGenStep.init(b, "resources.zig");
-    res.addShader("triangle_vert", "src/shaders/triangle.vert");
-    res.addShader("triangle_frag", "src/shaders/triangle.frag");
-    triangle_exe.addPackage(res.package);
+    triangle_exe.addPackage(gen);
+
+    const compile_shader = b.option(bool, "compile-shader", "Compile shader when build");
+    const res = blk: {
+        if (compile_shader) |_| {
+            const res = ResourceGenStep.init(b, "resources.zig");
+            res.addShader("triangle_vert", "src/shaders/triangle.vert");
+            res.addShader("triangle_frag", "src/shaders/triangle.frag");
+            break :blk res.package;
+        }
+
+        break :blk Pkg{ .name = "resources", .path = .{ .path = "zig-cache/resources.zig" }, .dependencies = null };
+    };
+
+    triangle_exe.addPackage(res);
 
     const triangle_run_cmd = triangle_exe.run();
     triangle_run_cmd.step.dependOn(b.getInstallStep());
