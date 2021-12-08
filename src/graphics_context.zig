@@ -1,81 +1,94 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const c = @import("c.zig");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const required_device_extensions = [_][]const u8{vk.extension_info.khr_swapchain.name};
 
-const BaseDispatch = vk.BaseWrapper(.{
-    .CreateInstance,
+const validation_extensions = [_][]const u8{
+    "VK_LAYER_KHRONOS_validation"[0.. :0],
+};
+const BaseDispatch = vk.BaseWrapper(&.{
+    .createInstance,
 });
 
-const InstanceDispatch = vk.InstanceWrapper(.{
-    .DestroyInstance,
-    .CreateDevice,
-    .DestroySurfaceKHR,
-    .EnumeratePhysicalDevices,
-    .GetPhysicalDeviceProperties,
-    .EnumerateDeviceExtensionProperties,
-    .GetPhysicalDeviceSurfaceFormatsKHR,
-    .GetPhysicalDeviceSurfacePresentModesKHR,
-    .GetPhysicalDeviceSurfaceCapabilitiesKHR,
-    .GetPhysicalDeviceQueueFamilyProperties,
-    .GetPhysicalDeviceSurfaceSupportKHR,
-    .GetPhysicalDeviceMemoryProperties,
-    .GetDeviceProcAddr,
+const InstanceDispatch = vk.InstanceWrapper(&.{
+    .destroyInstance,
+    .createDevice,
+    .destroySurfaceKHR,
+    .enumeratePhysicalDevices,
+    .getPhysicalDeviceProperties,
+    .enumerateDeviceExtensionProperties,
+    .getPhysicalDeviceSurfaceFormatsKHR,
+    .getPhysicalDeviceSurfacePresentModesKHR,
+    .getPhysicalDeviceSurfaceCapabilitiesKHR,
+    .getPhysicalDeviceQueueFamilyProperties,
+    .getPhysicalDeviceSurfaceSupportKHR,
+    .getPhysicalDeviceMemoryProperties,
+    .getDeviceProcAddr,
 });
 
-const DeviceDispatch = vk.DeviceWrapper(.{
-    .DestroyDevice,
-    .GetDeviceQueue,
-    .CreateSemaphore,
-    .CreateFence,
-    .CreateImageView,
-    .DestroyImageView,
-    .DestroySemaphore,
-    .DestroyFence,
-    .GetSwapchainImagesKHR,
-    .CreateSwapchainKHR,
-    .DestroySwapchainKHR,
-    .AcquireNextImageKHR,
-    .DeviceWaitIdle,
-    .WaitForFences,
-    .ResetFences,
-    .QueueSubmit,
-    .QueuePresentKHR,
-    .CreateCommandPool,
-    .DestroyCommandPool,
-    .AllocateCommandBuffers,
-    .FreeCommandBuffers,
-    .QueueWaitIdle,
-    .CreateShaderModule,
-    .DestroyShaderModule,
-    .CreatePipelineLayout,
-    .DestroyPipelineLayout,
-    .CreateRenderPass,
-    .DestroyRenderPass,
-    .CreateGraphicsPipelines,
-    .DestroyPipeline,
-    .CreateFramebuffer,
-    .DestroyFramebuffer,
-    .BeginCommandBuffer,
-    .EndCommandBuffer,
-    .AllocateMemory,
-    .FreeMemory,
-    .CreateBuffer,
-    .DestroyBuffer,
-    .GetBufferMemoryRequirements,
-    .MapMemory,
-    .UnmapMemory,
-    .BindBufferMemory,
-    .CmdBeginRenderPass,
-    .CmdEndRenderPass,
-    .CmdBindPipeline,
-    .CmdDraw,
-    .CmdSetViewport,
-    .CmdSetScissor,
-    .CmdBindVertexBuffers,
-    .CmdCopyBuffer,
+const DeviceDispatch = vk.DeviceWrapper(&.{
+    .destroyDevice,
+    .getDeviceQueue,
+    .createSemaphore,
+    .createFence,
+    .createImageView,
+    .destroyImageView,
+    .destroySemaphore,
+    .destroyFence,
+    .getSwapchainImagesKHR,
+    .createSwapchainKHR,
+    .destroySwapchainKHR,
+    .acquireNextImageKHR,
+    .deviceWaitIdle,
+    .waitForFences,
+    .resetFences,
+    .queueSubmit,
+    .queuePresentKHR,
+    .createCommandPool,
+    .destroyCommandPool,
+    .allocateCommandBuffers,
+    .freeCommandBuffers,
+    .queueWaitIdle,
+    .createShaderModule,
+    .destroyShaderModule,
+    .createPipelineLayout,
+    .destroyPipelineLayout,
+    .createRenderPass,
+    .destroyRenderPass,
+    .createGraphicsPipelines,
+    .destroyPipeline,
+    .createFramebuffer,
+    .destroyFramebuffer,
+    .createDescriptorSetLayout,
+    .destroyDescriptorSetLayout,
+    .beginCommandBuffer,
+    .endCommandBuffer,
+    .allocateMemory,
+    .freeMemory,
+    .createBuffer,
+    .destroyBuffer,
+    .getBufferMemoryRequirements,
+    .mapMemory,
+    .unmapMemory,
+    .bindBufferMemory,
+    .createDescriptorPool,
+    .allocateDescriptorSets,
+    .updateDescriptorSets,
+    .destroyDescriptorPool,
+    .cmdBindDescriptorSets,
+    .cmdBeginRenderPass,
+    .cmdEndRenderPass,
+    .cmdBindPipeline,
+    .cmdDraw,
+    .cmdSetViewport,
+    .cmdSetScissor,
+    .cmdBindVertexBuffers,
+    .cmdBindIndexBuffer,
+    .cmdDrawIndexed,
+    .cmdCopyBuffer,
 });
 
 pub const GraphicsContext = struct {
@@ -111,8 +124,11 @@ pub const GraphicsContext = struct {
         self.instance = try self.vkb.createInstance(.{
             .flags = .{},
             .p_application_info = &app_info,
-            .enabled_layer_count = 0,
-            .pp_enabled_layer_names = undefined,
+            .enabled_layer_count = if (builtin.mode == .Debug) validation_extensions.len else 0,
+            .pp_enabled_layer_names = if (builtin.mode == .Debug) @ptrCast(
+                [*]const [*:0]const u8,
+                &validation_extensions,
+            ) else undefined,
             .enabled_extension_count = glfw_exts_count,
             .pp_enabled_extension_names = @ptrCast([*]const [*:0]const u8, glfw_exts),
         }, null);
@@ -131,7 +147,7 @@ pub const GraphicsContext = struct {
         errdefer self.vkd.destroyDevice(self.dev, null);
 
         self.graphics_queue = Queue.init(self.vkd, self.dev, candidate.queues.graphics_family);
-        self.present_queue = Queue.init(self.vkd, self.dev, candidate.queues.graphics_family);
+        self.present_queue = Queue.init(self.vkd, self.dev, candidate.queues.present_family);
 
         self.mem_props = self.vki.getPhysicalDeviceMemoryProperties(self.pdev);
 

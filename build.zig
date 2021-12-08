@@ -24,7 +24,7 @@ pub const ResourceGenStep = struct {
 
         self.* = .{
             .step = Step.init(.custom, "resources", builder.allocator, make),
-            .shader_step = vkgen.ShaderCompileStep.init(builder, &[_][]const u8{ "glslc", "--target-env=vulkan1.2" }),
+            .shader_step = vkgen.ShaderCompileStep.init(builder, &[_][]const u8{ "glslc", "--target-env=vulkan1.1" }),
             .builder = builder,
             .package = .{
                 .name = "resources",
@@ -79,35 +79,34 @@ pub const ResourceGenStep = struct {
 pub fn linkGlfw(b: *LibExeObjStep) void {
     const glfw = b.builder.addStaticLibrary("glfw", null);
     const glfw_path = "./external/glfw/";
-    const src_files = .{
-        "context.c",
-        "egl_context.c",
-        "init.c",
-        "input.c",
-        "monitor.c",
-        "osmesa_context.c",
-        "vulkan.c",
+    inline for (.{
+        "win32_thread.c",
         "wgl_context.c",
         "win32_init.c",
-        "win32_joystick.c",
         "win32_monitor.c",
-        "win32_thread.c",
         "win32_time.c",
+        "win32_joystick.c",
         "win32_window.c",
         "win32_module.c",
-        "window.c",
+
         "null_init.c",
         "null_monitor.c",
         "null_window.c",
         "null_joystick.c",
         "platform.c",
-    };
-    inline for (src_files) |f| {
-        glfw.addCSourceFile(glfw_path ++ "src/" ++ f, &.{});
+        "monitor.c",
+        "init.c",
+        "vulkan.c",
+        "input.c",
+        "osmesa_context.c",
+        "egl_context.c",
+        "context.c",
+        "window.c",
+    }) |f| {
+        glfw.addCSourceFile(glfw_path ++ "src/" ++ f, &.{"-D_GLFW_WIN32"});
     }
     glfw.linkLibC();
     glfw.addIncludeDir(glfw_path ++ "src");
-    glfw.defineCMacro("_GLFW_WIN32", null);
     b.addIncludeDir(glfw_path ++ "include");
     b.linkLibrary(glfw);
 }
@@ -132,7 +131,7 @@ pub fn build(b: *Builder) void {
 
     triangle_exe.addPackage(gen);
 
-    const compile_shader = b.option(bool, "compile-shader", "Compile shader when build");
+    const compile_shader = b.option(bool, "shader", "Compile shader when build");
     const res = blk: {
         if (compile_shader) |_| {
             const res = ResourceGenStep.init(b, "resources.zig");
@@ -145,6 +144,8 @@ pub fn build(b: *Builder) void {
     };
 
     triangle_exe.addPackage(res);
+    const zalgebra = Pkg{ .name = "zalgebra", .path = .{ .path = "zalgebra/src/main.zig" }, .dependencies = null };
+    triangle_exe.addPackage(zalgebra);
 
     const triangle_run_cmd = triangle_exe.run();
     triangle_run_cmd.step.dependOn(b.getInstallStep());
