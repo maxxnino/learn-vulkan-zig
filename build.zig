@@ -111,6 +111,14 @@ pub fn linkGlfw(b: *LibExeObjStep) void {
     b.linkLibrary(glfw);
 }
 
+pub fn linkStbImage(b: *LibExeObjStep) void {
+    const stb_image = b.builder.addStaticLibrary("stb_image", null);
+    stb_image.addCSourceFile("external/stb_image.c", &.{});
+    stb_image.linkLibC();
+    b.addIncludeDir("external");
+    b.linkLibrary(stb_image);
+}
+
 pub fn build(b: *Builder) void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
@@ -122,6 +130,7 @@ pub fn build(b: *Builder) void {
     triangle_exe.linkLibC();
     triangle_exe.linkSystemLibrary("gdi32");
     linkGlfw(triangle_exe);
+    linkStbImage(triangle_exe);
 
     const vk_sdk_path = b.option([]const u8, "vulkan-sdk", "Path to vulkan sdk");
     const gen = if (vk_sdk_path) |path|
