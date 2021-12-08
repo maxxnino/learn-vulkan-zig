@@ -4,7 +4,9 @@ const c = @import("c.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
-const required_device_extensions = [_][]const u8{vk.extension_info.khr_swapchain.name};
+const required_device_extensions = [_][]const u8{
+    vk.extension_info.khr_swapchain.name,
+};
 
 const validation_extensions = [_][]const u8{
     "VK_LAYER_KHRONOS_validation"[0.. :0],
@@ -78,6 +80,14 @@ const DeviceDispatch = vk.DeviceWrapper(&.{
     .allocateDescriptorSets,
     .updateDescriptorSets,
     .destroyDescriptorPool,
+    .createImage,
+    .destroyImage,
+    .getImageMemoryRequirements,
+    .bindImageMemory,
+    .destroySampler,
+    .createSampler,
+    .cmdPipelineBarrier,
+    .cmdCopyBufferToImage,
     .cmdBindDescriptorSets,
     .cmdBeginRenderPass,
     .cmdEndRenderPass,
@@ -234,7 +244,9 @@ fn initializeCandidate(vki: InstanceDispatch, candidate: DeviceCandidate) !vk.De
         .pp_enabled_layer_names = undefined,
         .enabled_extension_count = required_device_extensions.len,
         .pp_enabled_extension_names = @ptrCast([*]const [*:0]const u8, &required_device_extensions),
-        .p_enabled_features = null,
+        .p_enabled_features = &.{
+            .sampler_anisotropy = vk.TRUE,
+        },
     }, null);
 }
 

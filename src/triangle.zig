@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 const za = @import("zalgebra");
 const Mat4 = za.Mat4;
 const Vec3 = za.Vec3;
+const assert = std.debug.assert;
 
 const app_name = "vulkan-zig triangle example";
 
@@ -22,7 +23,7 @@ const Vertex = struct {
         .{
             .binding = 0,
             .location = 0,
-            .format = .r32g32b32_sfloat,
+            .format = .r32g32_sfloat,
             .offset = @offsetOf(Vertex, "pos"),
         },
         .{
@@ -31,10 +32,17 @@ const Vertex = struct {
             .format = .r32g32b32_sfloat,
             .offset = @offsetOf(Vertex, "color"),
         },
+        .{
+            .binding = 0,
+            .location = 2,
+            .format = .r32g32_sfloat,
+            .offset = @offsetOf(Vertex, "tex_coord"),
+        },
     };
 
-    pos: [3]f32,
+    pos: [2]f32,
     color: [3]f32,
+    tex_coord: [2]f32,
 };
 
 const UniformBufferObject = struct {
@@ -140,23 +148,12 @@ const CameraPos = struct {
 };
 
 const vertices = [_]Vertex{
-    .{ .pos = .{ -1, -1, -1 }, .color = .{ 1.0, 0.0, 0.0 } },
-    .{ .pos = .{ 1, -1, -1 }, .color = .{ 0.0, 1.0, 0.0 } },
-    .{ .pos = .{ -1, 1, -1 }, .color = .{ 0.0, 0.0, 1.0 } },
-    .{ .pos = .{ 1, 1, -1 }, .color = .{ 1.0, 1.0, 0.0 } },
-    .{ .pos = .{ -1, -1, 1 }, .color = .{ 0.0, 1.0, 1.0 } },
-    .{ .pos = .{ 1, -1, 1 }, .color = .{ 1.0, 0.0, 1.0 } },
-    .{ .pos = .{ -1, 1, 1 }, .color = .{ 1.0, 1.0, 0.0 } },
-    .{ .pos = .{ 1, 1, 1 }, .color = .{ 0.5, 0.5, 0.5 } },
+    .{ .pos = .{ -0.5, -0.5 }, .color = .{ 1, 0, 0 }, .tex_coord = .{ 1, 0 } },
+    .{ .pos = .{ 0.5, -0.5 }, .color = .{ 0, 1, 0 }, .tex_coord = .{ 0, 0 } },
+    .{ .pos = .{ 0.5, 0.5 }, .color = .{ 0, 0, 1 }, .tex_coord = .{ 0, 1 } },
+    .{ .pos = .{ -0.5, 0.5 }, .color = .{ 1, 1, 1 }, .tex_coord = .{ 1, 1 } },
 };
-const indices = [_]u16{
-    0, 2, 1, 2, 3, 1,
-    1, 3, 5, 3, 7, 5,
-    2, 6, 3, 3, 6, 7,
-    4, 5, 7, 4, 7, 6,
-    0, 4, 2, 2, 4, 6,
-    0, 1, 4, 1, 5, 4,
-};
+const indices = [_]u16{ 0, 1, 2, 2, 3, 0 };
 
 const BufferMemory = struct {
     buffer: vk.Buffer,
@@ -186,6 +183,95 @@ const BufferMemory = struct {
     pub fn deinit(self: BufferMemory, gc: GraphicsContext) void {
         gc.vkd.freeMemory(gc.dev, self.memory, null);
         gc.vkd.destroyBuffer(gc.dev, self.buffer, null);
+    }
+};
+const TextureImage = struct {
+    image: vk.Image,
+    memory: vk.DeviceMemory,
+    view: vk.ImageView,
+    sampler: vk.Sampler,
+
+    pub fn init(
+        gc: GraphicsContext,
+        width: u32,
+        height: u32,
+        format: vk.Format,
+        tiling: vk.ImageTiling,
+        usage: vk.ImageUsageFlags,
+        properties: vk.MemoryPropertyFlags,
+    ) !TextureImage {
+        var bm: TextureImage = undefined;
+        const ici = vk.ImageCreateInfo{
+            .flags = .{},
+            .image_type = .@"2d",
+            .format = format,
+            .extent = .{
+                .width = width,
+                .height = height,
+                .depth = 1,
+            },
+            .mip_levels = 1,
+            .array_layers = 1,
+            .samples = .{ .@"1_bit" = true },
+            .tiling = tiling,
+            .usage = usage,
+            .sharing_mode = .exclusive,
+            .queue_family_index_count = 0,
+            .p_queue_family_indices = undefined,
+            .initial_layout = .@"undefined",
+        };
+        bm.image = try gc.vkd.createImage(gc.dev, ici, null);
+        errdefer gc.vkd.destroyImage(gc.dev, bm.image, null);
+
+        const mem_reqs = gc.vkd.getImageMemoryRequirements(gc.dev, bm.image);
+        bm.memory = try gc.allocate(mem_reqs, properties);
+        errdefer gc.vkd.freeMemory(gc.dev, bm.memory, null);
+
+        try gc.vkd.bindImageMemory(gc.dev, bm.image, bm.memory, 0);
+
+        bm.view = try gc.vkd.createImageView(gc.dev, .{
+            .flags = .{},
+            .image = bm.image,
+            .view_type = .@"2d",
+            .format = format,
+            .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+            .subresource_range = .{
+                .aspect_mask = .{ .color_bit = true },
+                .base_mip_level = 0,
+                .level_count = 1,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+        }, null);
+        errdefer gc.vkd.destroyImageView(gc.dev, bm.view, null);
+
+        const sci = vk.SamplerCreateInfo{
+            .flags = .{},
+            .mag_filter = .linear,
+            .min_filter = .linear,
+            .mipmap_mode = .linear,
+            .address_mode_u = .repeat,
+            .address_mode_v = .repeat,
+            .address_mode_w = .repeat,
+            .mip_lod_bias = 0,
+            .anisotropy_enable = vk.TRUE,
+            .max_anisotropy = gc.props.limits.max_sampler_anisotropy,
+            .compare_enable = vk.FALSE,
+            .compare_op = .always,
+            .min_lod = 0,
+            .max_lod = 0,
+            .border_color = .int_opaque_black,
+            .unnormalized_coordinates = vk.FALSE,
+        };
+        bm.sampler = try gc.vkd.createSampler(gc.dev, sci, null);
+        return bm;
+    }
+
+    pub fn deinit(self: TextureImage, gc: GraphicsContext) void {
+        gc.vkd.freeMemory(gc.dev, self.memory, null);
+        gc.vkd.destroyImage(gc.dev, self.image, null);
+        gc.vkd.destroyImageView(gc.dev, self.view, null);
+        gc.vkd.destroySampler(gc.dev, self.sampler, null);
     }
 };
 pub fn main() !void {
@@ -253,7 +339,16 @@ pub fn main() !void {
     var descriptor_pool = try createDescriptorPool(gc, framebuffers);
     defer gc.vkd.destroyDescriptorPool(gc.dev, descriptor_pool, null);
 
-    var descriptor_sets = try createDescriptorSets(gc, allocator, descriptor_pool, descriptor_layout, unibufs);
+    const texture = try createTextureImage(gc, pool);
+    defer texture.deinit(gc);
+    var descriptor_sets = try createDescriptorSets(
+        gc,
+        allocator,
+        descriptor_pool,
+        descriptor_layout,
+        unibufs,
+        texture,
+    );
     defer allocator.free(descriptor_sets);
 
     var cmdbufs = try createCommandBuffers(
@@ -314,7 +409,14 @@ pub fn main() !void {
             descriptor_pool = try createDescriptorPool(gc, framebuffers);
 
             allocator.free(descriptor_sets);
-            descriptor_sets = try createDescriptorSets(gc, allocator, descriptor_pool, descriptor_layout, unibufs);
+            descriptor_sets = try createDescriptorSets(
+                gc,
+                allocator,
+                descriptor_pool,
+                descriptor_layout,
+                unibufs,
+                texture,
+            );
 
             destroyCommandBuffers(&gc, pool, allocator, cmdbufs);
             cmdbufs = try createCommandBuffers(
@@ -424,39 +526,14 @@ fn createVertexBuffer(gc: GraphicsContext, pool: vk.CommandPool) !BufferMemory {
 }
 
 fn copyBuffer(gc: GraphicsContext, pool: vk.CommandPool, dst: vk.Buffer, src: vk.Buffer, size: vk.DeviceSize) !void {
-    var cmdbuf: vk.CommandBuffer = undefined;
-    try gc.vkd.allocateCommandBuffers(gc.dev, .{
-        .command_pool = pool,
-        .level = .primary,
-        .command_buffer_count = 1,
-    }, @ptrCast([*]vk.CommandBuffer, &cmdbuf));
-    defer gc.vkd.freeCommandBuffers(gc.dev, pool, 1, @ptrCast([*]const vk.CommandBuffer, &cmdbuf));
-
-    try gc.vkd.beginCommandBuffer(cmdbuf, .{
-        .flags = .{ .one_time_submit_bit = true },
-        .p_inheritance_info = null,
-    });
-
+    const cmdbuf = try beginSingleTimeCommand(gc, pool);
     const region = vk.BufferCopy{
         .src_offset = 0,
         .dst_offset = 0,
         .size = size,
     };
     gc.vkd.cmdCopyBuffer(cmdbuf, src, dst, 1, @ptrCast([*]const vk.BufferCopy, &region));
-
-    try gc.vkd.endCommandBuffer(cmdbuf);
-
-    const si = vk.SubmitInfo{
-        .wait_semaphore_count = 0,
-        .p_wait_semaphores = undefined,
-        .p_wait_dst_stage_mask = undefined,
-        .command_buffer_count = 1,
-        .p_command_buffers = @ptrCast([*]const vk.CommandBuffer, &cmdbuf),
-        .signal_semaphore_count = 0,
-        .p_signal_semaphores = undefined,
-    };
-    try gc.vkd.queueSubmit(gc.graphics_queue.handle, 1, @ptrCast([*]const vk.SubmitInfo, &si), .null_handle);
-    try gc.vkd.queueWaitIdle(gc.graphics_queue.handle);
+    try endSingleTimeCommands(gc, pool, cmdbuf);
 }
 
 fn createCommandBuffers(
@@ -770,16 +847,24 @@ fn createPipeline(
     return pipeline;
 }
 fn createDescriptorSetLayout(gc: GraphicsContext) !vk.DescriptorSetLayout {
-    var dslb = vk.DescriptorSetLayoutBinding{
+    var dslb: [2]vk.DescriptorSetLayoutBinding = undefined;
+    dslb[0] = vk.DescriptorSetLayoutBinding{
         .binding = 0,
         .descriptor_type = .uniform_buffer,
         .descriptor_count = 1,
         .stage_flags = .{ .vertex_bit = true },
         .p_immutable_samplers = null,
     };
+    dslb[1] = vk.DescriptorSetLayoutBinding{
+        .binding = 1,
+        .descriptor_type = .combined_image_sampler,
+        .descriptor_count = 1,
+        .stage_flags = .{ .fragment_bit = true },
+        .p_immutable_samplers = null,
+    };
     return try gc.vkd.createDescriptorSetLayout(gc.dev, .{
         .flags = .{},
-        .binding_count = 1,
+        .binding_count = @truncate(u32, dslb.len),
         .p_bindings = @ptrCast([*]const vk.DescriptorSetLayoutBinding, &dslb),
     }, null);
 }
@@ -789,6 +874,7 @@ fn createDescriptorSets(
     descriptor_pool: vk.DescriptorPool,
     layout: vk.DescriptorSetLayout,
     unibufs: []const BufferMemory,
+    texture: TextureImage,
 ) ![]vk.DescriptorSet {
     const size = @truncate(u32, unibufs.len);
     var layouts = try allocator.alloc(@TypeOf(layout), size);
@@ -810,7 +896,13 @@ fn createDescriptorSets(
             .offset = 0,
             .range = @sizeOf(UniformBufferObject),
         };
-        const wds = vk.WriteDescriptorSet{
+        const dii = vk.DescriptorImageInfo{
+            .sampler = texture.sampler,
+            .image_view = texture.view,
+            .image_layout = .shader_read_only_optimal,
+        };
+        var wds: [2]vk.WriteDescriptorSet = undefined;
+        wds[0] = vk.WriteDescriptorSet{
             .dst_set = sets[i],
             .dst_binding = 0,
             .dst_array_element = 0,
@@ -820,7 +912,23 @@ fn createDescriptorSets(
             .p_buffer_info = @ptrCast([*]const vk.DescriptorBufferInfo, &dbi),
             .p_texel_buffer_view = undefined,
         };
-        gc.vkd.updateDescriptorSets(gc.dev, 1, @ptrCast([*]const vk.WriteDescriptorSet, &wds), 0, undefined);
+        wds[1] = vk.WriteDescriptorSet{
+            .dst_set = sets[i],
+            .dst_binding = 1,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .combined_image_sampler,
+            .p_image_info = @ptrCast([*]const vk.DescriptorImageInfo, &dii),
+            .p_buffer_info = undefined,
+            .p_texel_buffer_view = undefined,
+        };
+        gc.vkd.updateDescriptorSets(
+            gc.dev,
+            @truncate(u32, wds.len),
+            @ptrCast([*]const vk.WriteDescriptorSet, &wds),
+            0,
+            undefined,
+        );
     }
     return sets;
 }
@@ -851,15 +959,191 @@ fn destroyUniformBuffers(gc: GraphicsContext, allocator: *Allocator, bufs: []Buf
 
 fn createDescriptorPool(gc: GraphicsContext, framebuffers: []const vk.Framebuffer) !vk.DescriptorPool {
     const size = @truncate(u32, framebuffers.len);
-    const pool_size = vk.DescriptorPoolSize{
+    var pool_size: [2]vk.DescriptorPoolSize = undefined;
+    pool_size[0] = .{
         .@"type" = .uniform_buffer,
+        .descriptor_count = size,
+    };
+    pool_size[1] = .{
+        .@"type" = .combined_image_sampler,
         .descriptor_count = size,
     };
     const dpci = vk.DescriptorPoolCreateInfo{
         .flags = .{},
         .max_sets = size,
-        .pool_size_count = 1,
+        .pool_size_count = @truncate(u32, pool_size.len),
         .p_pool_sizes = @ptrCast([*]const vk.DescriptorPoolSize, &pool_size),
     };
     return try gc.vkd.createDescriptorPool(gc.dev, dpci, null);
+}
+
+pub fn createTextureImage(gc: GraphicsContext, pool: vk.CommandPool) !TextureImage {
+    var tex_width: i32 = 0;
+    var tex_height: i32 = 0;
+    var tex_channels: i32 = 0;
+    const pixels = c.stbi_load("assets/texture.jpg", &tex_width, &tex_height, &tex_channels, c.STBI_rgb_alpha);
+    const size = @intCast(vk.DeviceSize, tex_width) * @intCast(vk.DeviceSize, tex_height) * 4;
+    assert(pixels != null and size > 0);
+    defer c.stbi_image_free(pixels);
+    var stage_buffer = try BufferMemory.init(
+        gc,
+        size,
+        .{ .transfer_src_bit = true },
+        .{ .host_coherent_bit = true, .host_visible_bit = true },
+    );
+    defer stage_buffer.deinit(gc);
+
+    {
+        const data = try gc.vkd.mapMemory(gc.dev, stage_buffer.memory, 0, size, .{});
+        defer gc.vkd.unmapMemory(gc.dev, stage_buffer.memory);
+
+        const gpu_memory = @ptrCast([*]u8, @alignCast(@alignOf(u8), data));
+        for (pixels[0..size]) |p, i| {
+            gpu_memory[i] = p;
+        }
+    }
+    const width = @intCast(u32, tex_width);
+    const height = @intCast(u32, tex_height);
+    const image = try TextureImage.init(
+        gc,
+        width,
+        height,
+        .r8g8b8a8_srgb,
+        .optimal,
+        .{ .transfer_dst_bit = true, .sampled_bit = true },
+        .{ .device_local_bit = true },
+    );
+    //TODO continue Layout transitions and nor deinit image here
+    try transitionImageLayout(gc, pool, image.image, .r8g8b8a8_srgb, .@"undefined", .transfer_dst_optimal);
+    try copyBufferToImage(gc, pool, stage_buffer.buffer, image.image, width, height);
+    try transitionImageLayout(
+        gc,
+        pool,
+        image.image,
+        .r8g8b8a8_srgb,
+        .transfer_dst_optimal,
+        .shader_read_only_optimal,
+    );
+    return image;
+}
+
+fn transitionImageLayout(
+    gc: GraphicsContext,
+    pool: vk.CommandPool,
+    image: vk.Image,
+    format: vk.Format,
+    old_layout: vk.ImageLayout,
+    new_layout: vk.ImageLayout,
+) !void {
+    // TOTO: format
+    _ = format;
+    const TransferType = enum {
+        @"undefined",
+        transfer_dst_optimal,
+        unsupported,
+    };
+    const cmdbuf = try beginSingleTimeCommand(gc, pool);
+    const transfer_type: TransferType = blk: {
+        if (old_layout == .@"undefined" and new_layout == .transfer_dst_optimal) break :blk .@"undefined";
+        if (old_layout == .transfer_dst_optimal and new_layout == .shader_read_only_optimal) break :blk .transfer_dst_optimal;
+        break :blk .unsupported;
+    };
+    assert(transfer_type != .unsupported);
+    const imb = vk.ImageMemoryBarrier{
+        .src_access_mask = if (transfer_type == .@"undefined") .{} else .{ .transfer_write_bit = true },
+        .dst_access_mask = if (transfer_type == .@"undefined") .{ .transfer_write_bit = true } else .{ .shader_read_bit = true },
+        .old_layout = old_layout,
+        .new_layout = new_layout,
+        .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+        .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresource_range = .{
+            .aspect_mask = .{ .color_bit = true },
+            .base_mip_level = 0,
+            .level_count = 1,
+            .base_array_layer = 0,
+            .layer_count = 1,
+        },
+    };
+    gc.vkd.cmdPipelineBarrier(
+        cmdbuf,
+        if (transfer_type == .@"undefined") .{ .top_of_pipe_bit = true } else .{ .transfer_bit = true },
+        if (transfer_type == .@"undefined") .{ .transfer_bit = true } else .{ .fragment_shader_bit = true },
+        .{},
+        0,
+        undefined,
+        0,
+        undefined,
+        1,
+        @ptrCast([*]const vk.ImageMemoryBarrier, &imb),
+    );
+    try endSingleTimeCommands(gc, pool, cmdbuf);
+}
+
+fn copyBufferToImage(
+    gc: GraphicsContext,
+    pool: vk.CommandPool,
+    buffer: vk.Buffer,
+    image: vk.Image,
+    width: u32,
+    height: u32,
+) !void {
+    const cmdbuf = try beginSingleTimeCommand(gc, pool);
+
+    const bic = vk.BufferImageCopy{
+        .buffer_offset = 0,
+        .buffer_row_length = 0,
+        .buffer_image_height = 0,
+        .image_subresource = .{
+            .aspect_mask = .{ .color_bit = true },
+            .mip_level = 0,
+            .base_array_layer = 0,
+            .layer_count = 1,
+        },
+        .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+        .image_extent = .{ .width = width, .height = height, .depth = 1 },
+    };
+    gc.vkd.cmdCopyBufferToImage(
+        cmdbuf,
+        buffer,
+        image,
+        .transfer_dst_optimal,
+        1,
+        @ptrCast([*]const vk.BufferImageCopy, &bic),
+    );
+    try endSingleTimeCommands(gc, pool, cmdbuf);
+}
+fn beginSingleTimeCommand(
+    gc: GraphicsContext,
+    pool: vk.CommandPool,
+) !vk.CommandBuffer {
+    var cmdbuf: vk.CommandBuffer = undefined;
+    try gc.vkd.allocateCommandBuffers(gc.dev, .{
+        .command_pool = pool,
+        .level = .primary,
+        .command_buffer_count = 1,
+    }, @ptrCast([*]vk.CommandBuffer, &cmdbuf));
+
+    try gc.vkd.beginCommandBuffer(cmdbuf, .{
+        .flags = .{ .one_time_submit_bit = true },
+        .p_inheritance_info = null,
+    });
+    return cmdbuf;
+}
+
+fn endSingleTimeCommands(gc: GraphicsContext, pool: vk.CommandPool, cmdbuf: vk.CommandBuffer) !void {
+    defer gc.vkd.freeCommandBuffers(gc.dev, pool, 1, @ptrCast([*]const vk.CommandBuffer, &cmdbuf));
+    try gc.vkd.endCommandBuffer(cmdbuf);
+
+    const si = vk.SubmitInfo{
+        .wait_semaphore_count = 0,
+        .p_wait_semaphores = undefined,
+        .p_wait_dst_stage_mask = undefined,
+        .command_buffer_count = 1,
+        .p_command_buffers = @ptrCast([*]const vk.CommandBuffer, &cmdbuf),
+        .signal_semaphore_count = 0,
+        .p_signal_semaphores = undefined,
+    };
+    try gc.vkd.queueSubmit(gc.graphics_queue.handle, 1, @ptrCast([*]const vk.SubmitInfo, &si), .null_handle);
+    try gc.vkd.queueWaitIdle(gc.graphics_queue.handle);
 }
