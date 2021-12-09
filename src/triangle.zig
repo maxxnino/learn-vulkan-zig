@@ -23,7 +23,7 @@ const Vertex = struct {
         .{
             .binding = 0,
             .location = 0,
-            .format = .r32g32_sfloat,
+            .format = .r32g32b32_sfloat,
             .offset = @offsetOf(Vertex, "pos"),
         },
         .{
@@ -40,7 +40,7 @@ const Vertex = struct {
         },
     };
 
-    pos: [2]f32,
+    pos: [3]f32,
     color: [3]f32,
     tex_coord: [2]f32,
 };
@@ -148,12 +148,16 @@ const CameraPos = struct {
 };
 
 const vertices = [_]Vertex{
-    .{ .pos = .{ -0.5, -0.5 }, .color = .{ 1, 0, 0 }, .tex_coord = .{ 1, 0 } },
-    .{ .pos = .{ 0.5, -0.5 }, .color = .{ 0, 1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .pos = .{ 0.5, 0.5 }, .color = .{ 0, 0, 1 }, .tex_coord = .{ 0, 1 } },
-    .{ .pos = .{ -0.5, 0.5 }, .color = .{ 1, 1, 1 }, .tex_coord = .{ 1, 1 } },
+    .{ .pos = .{ -0.5, -0.5, 0 }, .color = .{ 1, 0, 0 }, .tex_coord = .{ 1, 0 } },
+    .{ .pos = .{ 0.5, -0.5, 0 }, .color = .{ 0, 1, 0 }, .tex_coord = .{ 0, 0 } },
+    .{ .pos = .{ 0.5, 0.5, 0 }, .color = .{ 0, 0, 1 }, .tex_coord = .{ 0, 1 } },
+    .{ .pos = .{ -0.5, 0.5, 0 }, .color = .{ 1, 1, 1 }, .tex_coord = .{ 1, 1 } },
+    .{ .pos = .{ -0.5, -0.5, -0.5 }, .color = .{ 1, 0, 0 }, .tex_coord = .{ 1, 0 } },
+    .{ .pos = .{ 0.5, -0.5, -0.5 }, .color = .{ 0, 1, 0 }, .tex_coord = .{ 0, 0 } },
+    .{ .pos = .{ 0.5, 0.5, -0.5 }, .color = .{ 0, 0, 1 }, .tex_coord = .{ 0, 1 } },
+    .{ .pos = .{ -0.5, 0.5, -0.5 }, .color = .{ 1, 1, 1 }, .tex_coord = .{ 1, 1 } },
 };
-const indices = [_]u16{ 0, 1, 2, 2, 3, 0 };
+const indices = [_]u16{ 0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4 };
 
 const BufferMemory = struct {
     buffer: vk.Buffer,
@@ -274,6 +278,84 @@ const TextureImage = struct {
         gc.vkd.destroySampler(gc.dev, self.sampler, null);
     }
 };
+const DepthImage = struct {
+    image: vk.Image,
+    memory: vk.DeviceMemory,
+    view: vk.ImageView,
+
+    pub fn init(
+        gc: GraphicsContext,
+        width: u32,
+        height: u32,
+        format: vk.Format,
+        tiling: vk.ImageTiling,
+        usage: vk.ImageUsageFlags,
+        properties: vk.MemoryPropertyFlags,
+    ) !DepthImage {
+        var bm: DepthImage = undefined;
+        const ici = vk.ImageCreateInfo{
+            .flags = .{},
+            .image_type = .@"2d",
+            .format = format,
+            .extent = .{
+                .width = width,
+                .height = height,
+                .depth = 1,
+            },
+            .mip_levels = 1,
+            .array_layers = 1,
+            .samples = .{ .@"1_bit" = true },
+            .tiling = tiling,
+            .usage = usage,
+            .sharing_mode = .exclusive,
+            .queue_family_index_count = 0,
+            .p_queue_family_indices = undefined,
+            .initial_layout = .@"undefined",
+        };
+        bm.image = try gc.vkd.createImage(gc.dev, ici, null);
+        errdefer gc.vkd.destroyImage(gc.dev, bm.image, null);
+
+        const mem_reqs = gc.vkd.getImageMemoryRequirements(gc.dev, bm.image);
+        bm.memory = try gc.allocate(mem_reqs, properties);
+        errdefer gc.vkd.freeMemory(gc.dev, bm.memory, null);
+
+        try gc.vkd.bindImageMemory(gc.dev, bm.image, bm.memory, 0);
+
+        bm.view = try gc.vkd.createImageView(gc.dev, .{
+            .flags = .{},
+            .image = bm.image,
+            .view_type = .@"2d",
+            .format = format,
+            .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+            .subresource_range = .{
+                // NOTE: different compare to Swapchain image and TextureImage
+                .aspect_mask = .{ .depth_bit = true },
+                .base_mip_level = 0,
+                .level_count = 1,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+        }, null);
+        return bm;
+    }
+
+    pub fn deinit(self: DepthImage, gc: GraphicsContext) void {
+        gc.vkd.freeMemory(gc.dev, self.memory, null);
+        gc.vkd.destroyImage(gc.dev, self.image, null);
+        gc.vkd.destroyImageView(gc.dev, self.view, null);
+    }
+
+    pub fn findDepthFormat(gc: GraphicsContext) ?vk.Format {
+        return gc.findSupportedFormat(
+            &.{ .d32_sfloat, .d32_sfloat_s8_uint, .d24_unorm_s8_uint },
+            .optimal,
+            .{ .depth_stencil_attachment_bit = true },
+        );
+    }
+    pub fn hasStencilComponent(format: vk.Format) bool {
+        return format == .d32_sfloat_s8_uint or format == .d24_unorm_s8_uint;
+    }
+};
 pub fn main() !void {
     if (c.glfwInit() != c.GLFW_TRUE) return error.GlfwInitFailed;
     defer c.glfwTerminate();
@@ -300,7 +382,7 @@ pub fn main() !void {
     var swapchain = try Swapchain.init(&gc, allocator, extent);
     defer swapchain.deinit();
 
-    const render_pass = try createRenderPass(&gc, swapchain);
+    const render_pass = try createRenderPass(gc, swapchain);
     defer gc.vkd.destroyRenderPass(gc.dev, render_pass, null);
 
     const descriptor_layout = try createDescriptorSetLayout(gc);
@@ -318,7 +400,10 @@ pub fn main() !void {
     var pipeline = try createPipeline(&gc, pipeline_layout, render_pass);
     defer gc.vkd.destroyPipeline(gc.dev, pipeline, null);
 
-    var framebuffers = try createFramebuffers(&gc, allocator, render_pass, swapchain);
+    var depth_image = try createDepthResources(gc, swapchain.extent);
+    defer depth_image.deinit(gc);
+
+    var framebuffers = try createFramebuffers(&gc, allocator, render_pass, swapchain, depth_image);
     defer destroyFramebuffers(&gc, allocator, framebuffers);
 
     const pool = try gc.vkd.createCommandPool(gc.dev, .{
@@ -399,8 +484,11 @@ pub fn main() !void {
             extent.height = @intCast(u32, h);
             try swapchain.recreate(extent);
 
+            depth_image.deinit(gc);
+            depth_image = try createDepthResources(gc, swapchain.extent);
+
             destroyFramebuffers(&gc, allocator, framebuffers);
-            framebuffers = try createFramebuffers(&gc, allocator, render_pass, swapchain);
+            framebuffers = try createFramebuffers(&gc, allocator, render_pass, swapchain, depth_image);
 
             destroyUniformBuffers(gc, allocator, unibufs);
             unibufs = try createUniformBuffer(gc, allocator, framebuffers);
@@ -559,8 +647,13 @@ fn createCommandBuffers(
     }, cmdbufs.ptr);
     errdefer gc.vkd.freeCommandBuffers(gc.dev, pool, @truncate(u32, cmdbufs.len), cmdbufs.ptr);
 
-    const clear = vk.ClearValue{
-        .color = .{ .float_32 = .{ 0, 0, 0, 1 } },
+    const clear = [_]vk.ClearValue{
+        .{
+            .color = .{ .float_32 = .{ 0, 0, 0, 1 } },
+        },
+        .{
+            .depth_stencil = .{ .depth = 1, .stencil = 0 },
+        },
     };
 
     const viewport = vk.Viewport{
@@ -593,7 +686,7 @@ fn createCommandBuffers(
                 .offset = .{ .x = 0, .y = 0 },
                 .extent = extent,
             },
-            .clear_value_count = 1,
+            .clear_value_count = @truncate(u32, clear.len),
             .p_clear_values = @ptrCast([*]const vk.ClearValue, &clear),
         }, .@"inline");
 
@@ -619,12 +712,23 @@ fn createCommandBuffers(
     return cmdbufs;
 }
 
-fn destroyCommandBuffers(gc: *const GraphicsContext, pool: vk.CommandPool, allocator: *Allocator, cmdbufs: []vk.CommandBuffer) void {
+fn destroyCommandBuffers(
+    gc: *const GraphicsContext,
+    pool: vk.CommandPool,
+    allocator: *Allocator,
+    cmdbufs: []vk.CommandBuffer,
+) void {
     gc.vkd.freeCommandBuffers(gc.dev, pool, @truncate(u32, cmdbufs.len), cmdbufs.ptr);
     allocator.free(cmdbufs);
 }
 
-fn createFramebuffers(gc: *const GraphicsContext, allocator: *Allocator, render_pass: vk.RenderPass, swapchain: Swapchain) ![]vk.Framebuffer {
+fn createFramebuffers(
+    gc: *const GraphicsContext,
+    allocator: *Allocator,
+    render_pass: vk.RenderPass,
+    swapchain: Swapchain,
+    depth_image: DepthImage,
+) ![]vk.Framebuffer {
     const framebuffers = try allocator.alloc(vk.Framebuffer, swapchain.swap_images.len);
     errdefer allocator.free(framebuffers);
 
@@ -632,11 +736,15 @@ fn createFramebuffers(gc: *const GraphicsContext, allocator: *Allocator, render_
     errdefer for (framebuffers[0..i]) |fb| gc.vkd.destroyFramebuffer(gc.dev, fb, null);
 
     for (framebuffers) |*fb| {
+        const attachments = [_]vk.ImageView{
+            swapchain.swap_images[i].view,
+            depth_image.view,
+        };
         fb.* = try gc.vkd.createFramebuffer(gc.dev, .{
             .flags = .{},
             .render_pass = render_pass,
-            .attachment_count = 1,
-            .p_attachments = @ptrCast([*]const vk.ImageView, &swapchain.swap_images[i].view),
+            .attachment_count = @truncate(u32, attachments.len),
+            .p_attachments = @ptrCast([*]const vk.ImageView, &attachments),
             .width = swapchain.extent.width,
             .height = swapchain.extent.height,
             .layers = 1,
@@ -652,22 +760,42 @@ fn destroyFramebuffers(gc: *const GraphicsContext, allocator: *Allocator, frameb
     allocator.free(framebuffers);
 }
 
-fn createRenderPass(gc: *const GraphicsContext, swapchain: Swapchain) !vk.RenderPass {
-    const color_attachment = vk.AttachmentDescription{
-        .flags = .{},
-        .format = swapchain.surface_format.format,
-        .samples = .{ .@"1_bit" = true },
-        .load_op = .clear,
-        .store_op = .store,
-        .stencil_load_op = .dont_care,
-        .stencil_store_op = .dont_care,
-        .initial_layout = .@"undefined",
-        .final_layout = .present_src_khr,
+fn createRenderPass(gc: GraphicsContext, swapchain: Swapchain) !vk.RenderPass {
+    const attachments = [_]vk.AttachmentDescription{
+        // color attachment
+        .{
+            .flags = .{},
+            .format = swapchain.surface_format.format,
+            .samples = .{ .@"1_bit" = true },
+            .load_op = .clear,
+            .store_op = .store,
+            .stencil_load_op = .dont_care,
+            .stencil_store_op = .dont_care,
+            .initial_layout = .@"undefined",
+            .final_layout = .present_src_khr,
+        },
+        //depth_attachment
+        .{
+            .flags = .{},
+            .format = DepthImage.findDepthFormat(gc).?,
+            .samples = .{ .@"1_bit" = true },
+            .load_op = .clear,
+            .store_op = .dont_care,
+            .stencil_load_op = .dont_care,
+            .stencil_store_op = .dont_care,
+            .initial_layout = .@"undefined",
+            .final_layout = .depth_stencil_attachment_optimal,
+        },
     };
 
     const color_attachment_ref = vk.AttachmentReference{
         .attachment = 0,
         .layout = .color_attachment_optimal,
+    };
+
+    const depth_attachment_ref = vk.AttachmentReference{
+        .attachment = 1,
+        .layout = .depth_stencil_attachment_optimal,
     };
 
     const subpass = vk.SubpassDescription{
@@ -678,19 +806,27 @@ fn createRenderPass(gc: *const GraphicsContext, swapchain: Swapchain) !vk.Render
         .color_attachment_count = 1,
         .p_color_attachments = @ptrCast([*]const vk.AttachmentReference, &color_attachment_ref),
         .p_resolve_attachments = null,
-        .p_depth_stencil_attachment = null,
+        .p_depth_stencil_attachment = &depth_attachment_ref,
         .preserve_attachment_count = 0,
         .p_preserve_attachments = undefined,
     };
-
+    const sd = vk.SubpassDependency{
+        .src_subpass = vk.SUBPASS_EXTERNAL,
+        .dst_subpass = 0,
+        .src_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+        .dst_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+        .src_access_mask = .{},
+        .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
+        .dependency_flags = .{},
+    };
     return try gc.vkd.createRenderPass(gc.dev, .{
         .flags = .{},
-        .attachment_count = 1,
-        .p_attachments = @ptrCast([*]const vk.AttachmentDescription, &color_attachment),
+        .attachment_count = @truncate(u32, attachments.len),
+        .p_attachments = @ptrCast([*]const vk.AttachmentDescription, &attachments),
         .subpass_count = 1,
         .p_subpasses = @ptrCast([*]const vk.SubpassDescription, &subpass),
-        .dependency_count = 0,
-        .p_dependencies = undefined,
+        .dependency_count = 1,
+        .p_dependencies = @ptrCast([*]const vk.SubpassDependency, &sd),
     }, null);
 }
 
@@ -815,6 +951,19 @@ fn createPipeline(
         .p_dynamic_states = &dynstate,
     };
 
+    const pdssci = vk.PipelineDepthStencilStateCreateInfo{
+        .flags = .{},
+        .depth_test_enable = vk.TRUE,
+        .depth_write_enable = vk.TRUE,
+        .depth_compare_op = .less,
+        .depth_bounds_test_enable = vk.FALSE,
+        .stencil_test_enable = vk.FALSE,
+        .front = undefined,
+        .back = undefined,
+        .min_depth_bounds = 0,
+        .max_depth_bounds = 1,
+    };
+
     const gpci = vk.GraphicsPipelineCreateInfo{
         .flags = .{},
         .stage_count = 2,
@@ -825,7 +974,7 @@ fn createPipeline(
         .p_viewport_state = &pvsci,
         .p_rasterization_state = &prsci,
         .p_multisample_state = &pmsci,
-        .p_depth_stencil_state = null,
+        .p_depth_stencil_state = &pdssci,
         .p_color_blend_state = &pcbsci,
         .p_dynamic_state = &pdsci,
         .layout = layout,
@@ -847,20 +996,21 @@ fn createPipeline(
     return pipeline;
 }
 fn createDescriptorSetLayout(gc: GraphicsContext) !vk.DescriptorSetLayout {
-    var dslb: [2]vk.DescriptorSetLayoutBinding = undefined;
-    dslb[0] = vk.DescriptorSetLayoutBinding{
-        .binding = 0,
-        .descriptor_type = .uniform_buffer,
-        .descriptor_count = 1,
-        .stage_flags = .{ .vertex_bit = true },
-        .p_immutable_samplers = null,
-    };
-    dslb[1] = vk.DescriptorSetLayoutBinding{
-        .binding = 1,
-        .descriptor_type = .combined_image_sampler,
-        .descriptor_count = 1,
-        .stage_flags = .{ .fragment_bit = true },
-        .p_immutable_samplers = null,
+    const dslb = [2]vk.DescriptorSetLayoutBinding{
+        .{
+            .binding = 0,
+            .descriptor_type = .uniform_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{ .vertex_bit = true },
+            .p_immutable_samplers = null,
+        },
+        .{
+            .binding = 1,
+            .descriptor_type = .combined_image_sampler,
+            .descriptor_count = 1,
+            .stage_flags = .{ .fragment_bit = true },
+            .p_immutable_samplers = null,
+        },
     };
     return try gc.vkd.createDescriptorSetLayout(gc.dev, .{
         .flags = .{},
@@ -901,26 +1051,27 @@ fn createDescriptorSets(
             .image_view = texture.view,
             .image_layout = .shader_read_only_optimal,
         };
-        var wds: [2]vk.WriteDescriptorSet = undefined;
-        wds[0] = vk.WriteDescriptorSet{
-            .dst_set = sets[i],
-            .dst_binding = 0,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .uniform_buffer,
-            .p_image_info = undefined,
-            .p_buffer_info = @ptrCast([*]const vk.DescriptorBufferInfo, &dbi),
-            .p_texel_buffer_view = undefined,
-        };
-        wds[1] = vk.WriteDescriptorSet{
-            .dst_set = sets[i],
-            .dst_binding = 1,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .combined_image_sampler,
-            .p_image_info = @ptrCast([*]const vk.DescriptorImageInfo, &dii),
-            .p_buffer_info = undefined,
-            .p_texel_buffer_view = undefined,
+        const wds = [2]vk.WriteDescriptorSet{
+            .{
+                .dst_set = sets[i],
+                .dst_binding = 0,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .uniform_buffer,
+                .p_image_info = undefined,
+                .p_buffer_info = @ptrCast([*]const vk.DescriptorBufferInfo, &dbi),
+                .p_texel_buffer_view = undefined,
+            },
+            .{
+                .dst_set = sets[i],
+                .dst_binding = 1,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .combined_image_sampler,
+                .p_image_info = @ptrCast([*]const vk.DescriptorImageInfo, &dii),
+                .p_buffer_info = undefined,
+                .p_texel_buffer_view = undefined,
+            },
         };
         gc.vkd.updateDescriptorSets(
             gc.dev,
@@ -959,14 +1110,15 @@ fn destroyUniformBuffers(gc: GraphicsContext, allocator: *Allocator, bufs: []Buf
 
 fn createDescriptorPool(gc: GraphicsContext, framebuffers: []const vk.Framebuffer) !vk.DescriptorPool {
     const size = @truncate(u32, framebuffers.len);
-    var pool_size: [2]vk.DescriptorPoolSize = undefined;
-    pool_size[0] = .{
-        .@"type" = .uniform_buffer,
-        .descriptor_count = size,
-    };
-    pool_size[1] = .{
-        .@"type" = .combined_image_sampler,
-        .descriptor_count = size,
+    var pool_size = [2]vk.DescriptorPoolSize{
+        .{
+            .@"type" = .uniform_buffer,
+            .descriptor_count = size,
+        },
+        .{
+            .@"type" = .combined_image_sampler,
+            .descriptor_count = size,
+        },
     };
     const dpci = vk.DescriptorPoolCreateInfo{
         .flags = .{},
@@ -1146,4 +1298,19 @@ fn endSingleTimeCommands(gc: GraphicsContext, pool: vk.CommandPool, cmdbuf: vk.C
     };
     try gc.vkd.queueSubmit(gc.graphics_queue.handle, 1, @ptrCast([*]const vk.SubmitInfo, &si), .null_handle);
     try gc.vkd.queueWaitIdle(gc.graphics_queue.handle);
+}
+fn createDepthResources(gc: GraphicsContext, extent: vk.Extent2D) !DepthImage {
+    const depth_format = DepthImage.findDepthFormat(gc).?;
+    const depth_image = try DepthImage.init(
+        gc,
+        extent.width,
+        extent.height,
+        depth_format,
+        .optimal,
+        .{ .depth_stencil_attachment_bit = true },
+        .{ .device_local_bit = true },
+    );
+    return depth_image;
+    // TODO: Explicitly transitioning the depth image
+    // try transitionImageLayout(gc, pool, image.image, .r8g8b8a8_srgb, .@"undefined", .transfer_dst_optimal);
 }

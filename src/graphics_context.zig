@@ -28,6 +28,7 @@ const InstanceDispatch = vk.InstanceWrapper(&.{
     .getPhysicalDeviceQueueFamilyProperties,
     .getPhysicalDeviceSurfaceSupportKHR,
     .getPhysicalDeviceMemoryProperties,
+    .getPhysicalDeviceFormatProperties,
     .getDeviceProcAddr,
 });
 
@@ -190,6 +191,23 @@ pub const GraphicsContext = struct {
             .allocation_size = requirements.size,
             .memory_type_index = try self.findMemoryTypeIndex(requirements.memory_type_bits, flags),
         }, null);
+    }
+    pub fn findSupportedFormat(
+        self: GraphicsContext,
+        candidates: []const vk.Format,
+        tiling: vk.ImageTiling,
+        features: vk.FormatFeatureFlags,
+    ) ?vk.Format {
+        for (candidates) |format| {
+            const fp = self.vki.getPhysicalDeviceFormatProperties(self.pdev, format);
+            if (tiling == .linear and fp.linear_tiling_features.contains(features)) {
+                return format;
+            }
+            if (tiling == .optimal and fp.optimal_tiling_features.contains(features)) {
+                return format;
+            }
+        }
+        return null;
     }
 };
 
