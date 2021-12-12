@@ -8,9 +8,17 @@ const Allocator = std.mem.Allocator;
 const za = @import("zalgebra");
 const Mat4 = za.Mat4;
 const Vec3 = za.Vec3;
+const Vec2 = za.Vec2;
 const assert = std.debug.assert;
 
 const app_name = "vulkan-zig triangle example";
+
+const Mesh = struct {
+    index_offset: u32,
+    vertex_offset: u32,
+    num_indices: u32,
+    num_vertices: u32,
+};
 
 const Vertex = struct {
     const binding_description = vk.VertexInputBindingDescription{
@@ -40,9 +48,9 @@ const Vertex = struct {
         },
     };
 
-    pos: [3]f32,
-    color: [3]f32,
-    tex_coord: [2]f32,
+    pos: Vec3,
+    color: Vec3 = Vec3.zero(),
+    tex_coord: Vec2,
 };
 
 const UniformBufferObject = struct {
@@ -85,22 +93,20 @@ const CameraPos = struct {
     const move_speed: f32 = 8;
 
     fn moveInPlaneXZ(self: *CameraPos, window: *c.GLFWwindow, dt: f32) void {
-        const prev_xpos = self.xpos;
-        const prev_ypos = self.ypos;
-        c.glfwGetCursorPos(window, &self.xpos, &self.ypos);
-        const ydelta = @floatCast(f32, self.ypos - prev_ypos);
-        const xdelta = @floatCast(f32, self.xpos - prev_xpos);
-        var rotate = Vec3.new(ydelta, -xdelta, 0);
-        // if (ydelta > std.math.epsilon(f64) and xdelta > std.math.epsilon(f64))
-        // else
-        //     Vec3.zero();
+        var x_dir: f32 = 0;
+        var y_dir: f32 = 0;
+        if (c.glfwGetKey(window, c.GLFW_KEY_J) == c.GLFW_PRESS) x_dir -= 1;
+        if (c.glfwGetKey(window, c.GLFW_KEY_K) == c.GLFW_PRESS) x_dir += 1;
+        if (c.glfwGetKey(window, c.GLFW_KEY_H) == c.GLFW_PRESS) y_dir += 1;
+        if (c.glfwGetKey(window, c.GLFW_KEY_L) == c.GLFW_PRESS) y_dir -= 1;
+        var rotate = Vec3.new(x_dir, y_dir, 0);
 
         if (rotate.dot(rotate) > std.math.epsilon(f32)) {
             self.rotation = self.rotation.add(rotate.norm().scale(look_speed * dt));
         }
 
         // limit pitch values between about +/- 85ish degrees
-        self.rotation.x = std.math.clamp(self.rotation.x, -1.5, 1.5);
+        self.rotation.x = std.math.mod(f32, self.rotation.x, 2 * std.math.pi) catch unreachable;
         self.rotation.y = std.math.mod(f32, self.rotation.y, 2 * std.math.pi) catch unreachable;
 
         const yaw = self.rotation.y;
@@ -113,8 +119,8 @@ const CameraPos = struct {
         if (c.glfwGetKey(window, c.GLFW_KEY_S) == c.GLFW_PRESS) move_dir = move_dir.sub(forward_dir);
         if (c.glfwGetKey(window, c.GLFW_KEY_A) == c.GLFW_PRESS) move_dir = move_dir.add(right_dir);
         if (c.glfwGetKey(window, c.GLFW_KEY_D) == c.GLFW_PRESS) move_dir = move_dir.sub(right_dir);
-        if (c.glfwGetKey(window, c.GLFW_KEY_Z) == c.GLFW_PRESS) move_dir = move_dir.add(up_dir);
-        if (c.glfwGetKey(window, c.GLFW_KEY_C) == c.GLFW_PRESS) move_dir = move_dir.sub(up_dir);
+        if (c.glfwGetKey(window, c.GLFW_KEY_SPACE) == c.GLFW_PRESS) move_dir = move_dir.add(up_dir);
+        if (c.glfwGetKey(window, c.GLFW_KEY_LEFT_CONTROL) == c.GLFW_PRESS) move_dir = move_dir.sub(up_dir);
 
         if (move_dir.dot(move_dir) > std.math.epsilon(f32)) {
             self.translation = self.translation.add(move_dir.norm().scale(move_speed * dt));
@@ -146,18 +152,6 @@ const CameraPos = struct {
         return view_matrix;
     }
 };
-
-const vertices = [_]Vertex{
-    .{ .pos = .{ -0.5, -0.5, 0 }, .color = .{ 1, 0, 0 }, .tex_coord = .{ 1, 0 } },
-    .{ .pos = .{ 0.5, -0.5, 0 }, .color = .{ 0, 1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .pos = .{ 0.5, 0.5, 0 }, .color = .{ 0, 0, 1 }, .tex_coord = .{ 0, 1 } },
-    .{ .pos = .{ -0.5, 0.5, 0 }, .color = .{ 1, 1, 1 }, .tex_coord = .{ 1, 1 } },
-    .{ .pos = .{ -0.5, -0.5, -0.5 }, .color = .{ 1, 0, 0 }, .tex_coord = .{ 1, 0 } },
-    .{ .pos = .{ 0.5, -0.5, -0.5 }, .color = .{ 0, 1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .pos = .{ 0.5, 0.5, -0.5 }, .color = .{ 0, 0, 1 }, .tex_coord = .{ 0, 1 } },
-    .{ .pos = .{ -0.5, 0.5, -0.5 }, .color = .{ 1, 1, 1 }, .tex_coord = .{ 1, 1 } },
-};
-const indices = [_]u16{ 0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4 };
 
 const BufferMemory = struct {
     buffer: vk.Buffer,
@@ -412,20 +406,32 @@ pub fn main() !void {
     }, null);
     defer gc.vkd.destroyCommandPool(gc.dev, pool, null);
 
-    const vertex_buffer = try createVertexBuffer(gc, pool);
+    const model_path = "assets/untitled.gltf";
+    const texture_path = "assets/viking_room.png";
+    var indices = std.ArrayList(u32).init(allocator);
+    defer indices.deinit();
+    var vertices = std.ArrayList(Vertex).init(allocator);
+    var meshs = std.ArrayList(Mesh).init(allocator);
+    defer vertices.deinit();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    loadScene(&arena.allocator, &meshs, &vertices, &indices, model_path);
+    arena.deinit();
+
+    const vertex_buffer = try createVertexBuffer(gc, pool, vertices.items);
     defer vertex_buffer.deinit(gc);
 
-    const index_buffer = try createIndexBuffer(gc, pool);
+    const index_buffer = try createIndexBuffer(gc, pool, indices.items);
     defer index_buffer.deinit(gc);
 
     var unibufs = try createUniformBuffer(gc, allocator, framebuffers);
     defer destroyUniformBuffers(gc, allocator, unibufs);
 
+    const texture = try createTextureImage(gc, pool, texture_path);
+    defer texture.deinit(gc);
+
     var descriptor_pool = try createDescriptorPool(gc, framebuffers);
     defer gc.vkd.destroyDescriptorPool(gc.dev, descriptor_pool, null);
 
-    const texture = try createTextureImage(gc, pool);
-    defer texture.deinit(gc);
     var descriptor_sets = try createDescriptorSets(
         gc,
         allocator,
@@ -448,6 +454,7 @@ pub fn main() !void {
         framebuffers,
         pipeline_layout,
         descriptor_sets,
+        indices.items,
     );
     defer destroyCommandBuffers(&gc, pool, allocator, cmdbufs);
     var update_timer = try std.time.Timer.start();
@@ -519,6 +526,7 @@ pub fn main() !void {
                 framebuffers,
                 pipeline_layout,
                 descriptor_sets,
+                indices.items,
             );
         }
 
@@ -538,7 +546,7 @@ fn updateUniformBuffer(gc: GraphicsContext, buffer: BufferMemory, extent: vk.Ext
         .proj = proj,
         .view = view,
         // .model = Mat4.identity().rotate(90, Vec3.new(0, 0, 1)),
-        .model = Mat4.identity(),
+        .model = Mat4.identity().rotate(-90, Vec3.up()),
     };
 
     {
@@ -549,8 +557,8 @@ fn updateUniformBuffer(gc: GraphicsContext, buffer: BufferMemory, extent: vk.Ext
         gpu_memory.* = ubo;
     }
 }
-fn createIndexBuffer(gc: GraphicsContext, pool: vk.CommandPool) !BufferMemory {
-    const size = @sizeOf(@TypeOf(indices));
+fn createIndexBuffer(gc: GraphicsContext, pool: vk.CommandPool, indices: []const u32) !BufferMemory {
+    const size = @sizeOf(u32) * indices.len;
     var buffer = try BufferMemory.init(
         gc,
         size,
@@ -570,7 +578,7 @@ fn createIndexBuffer(gc: GraphicsContext, pool: vk.CommandPool) !BufferMemory {
         const data = try gc.vkd.mapMemory(gc.dev, stage_buffer.memory, 0, vk.WHOLE_SIZE, .{});
         defer gc.vkd.unmapMemory(gc.dev, stage_buffer.memory);
 
-        const gpu_memory = @ptrCast([*]u16, @alignCast(@alignOf(u16), data));
+        const gpu_memory = @ptrCast([*]u32, @alignCast(@alignOf(u32), data));
         for (indices) |indice, i| {
             gpu_memory[i] = indice;
         }
@@ -581,8 +589,8 @@ fn createIndexBuffer(gc: GraphicsContext, pool: vk.CommandPool) !BufferMemory {
     return buffer;
 }
 
-fn createVertexBuffer(gc: GraphicsContext, pool: vk.CommandPool) !BufferMemory {
-    const size = @sizeOf(@TypeOf(vertices));
+fn createVertexBuffer(gc: GraphicsContext, pool: vk.CommandPool, vertices: []const Vertex) !BufferMemory {
+    const size = @sizeOf(Vertex) * vertices.len;
     var vertex_buffer = try BufferMemory.init(
         gc,
         size,
@@ -627,7 +635,7 @@ fn copyBuffer(gc: GraphicsContext, pool: vk.CommandPool, dst: vk.Buffer, src: vk
 fn createCommandBuffers(
     gc: *const GraphicsContext,
     pool: vk.CommandPool,
-    allocator: *Allocator,
+    allocator: Allocator,
     buffer: vk.Buffer,
     index_buffer: vk.Buffer,
     extent: vk.Extent2D,
@@ -636,6 +644,7 @@ fn createCommandBuffers(
     framebuffers: []vk.Framebuffer,
     pipeline_layout: vk.PipelineLayout,
     descriptor_sets: []vk.DescriptorSet,
+    indices: []const u32,
 ) ![]vk.CommandBuffer {
     const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
     errdefer allocator.free(cmdbufs);
@@ -693,7 +702,7 @@ fn createCommandBuffers(
         gc.vkd.cmdBindPipeline(cmdbuf, .graphics, pipeline);
         const offset = [_]vk.DeviceSize{0};
         gc.vkd.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast([*]const vk.Buffer, &buffer), &offset);
-        gc.vkd.cmdBindIndexBuffer(cmdbuf, index_buffer, 0, .uint16);
+        gc.vkd.cmdBindIndexBuffer(cmdbuf, index_buffer, 0, .uint32);
         gc.vkd.cmdBindDescriptorSets(
             cmdbuf,
             .graphics,
@@ -715,7 +724,7 @@ fn createCommandBuffers(
 fn destroyCommandBuffers(
     gc: *const GraphicsContext,
     pool: vk.CommandPool,
-    allocator: *Allocator,
+    allocator: Allocator,
     cmdbufs: []vk.CommandBuffer,
 ) void {
     gc.vkd.freeCommandBuffers(gc.dev, pool, @truncate(u32, cmdbufs.len), cmdbufs.ptr);
@@ -724,7 +733,7 @@ fn destroyCommandBuffers(
 
 fn createFramebuffers(
     gc: *const GraphicsContext,
-    allocator: *Allocator,
+    allocator: Allocator,
     render_pass: vk.RenderPass,
     swapchain: Swapchain,
     depth_image: DepthImage,
@@ -755,7 +764,7 @@ fn createFramebuffers(
     return framebuffers;
 }
 
-fn destroyFramebuffers(gc: *const GraphicsContext, allocator: *Allocator, framebuffers: []const vk.Framebuffer) void {
+fn destroyFramebuffers(gc: *const GraphicsContext, allocator: Allocator, framebuffers: []const vk.Framebuffer) void {
     for (framebuffers) |fb| gc.vkd.destroyFramebuffer(gc.dev, fb, null);
     allocator.free(framebuffers);
 }
@@ -1020,7 +1029,7 @@ fn createDescriptorSetLayout(gc: GraphicsContext) !vk.DescriptorSetLayout {
 }
 fn createDescriptorSets(
     gc: GraphicsContext,
-    allocator: *Allocator,
+    allocator: Allocator,
     descriptor_pool: vk.DescriptorPool,
     layout: vk.DescriptorSetLayout,
     unibufs: []const BufferMemory,
@@ -1083,7 +1092,7 @@ fn createDescriptorSets(
     }
     return sets;
 }
-fn createUniformBuffer(gc: GraphicsContext, allocator: *Allocator, framebuffers: []const vk.Framebuffer) ![]BufferMemory {
+fn createUniformBuffer(gc: GraphicsContext, allocator: Allocator, framebuffers: []const vk.Framebuffer) ![]BufferMemory {
     const unibufs = try allocator.alloc(BufferMemory, framebuffers.len);
     errdefer allocator.free(unibufs);
 
@@ -1101,7 +1110,7 @@ fn createUniformBuffer(gc: GraphicsContext, allocator: *Allocator, framebuffers:
     return unibufs;
 }
 
-fn destroyUniformBuffers(gc: GraphicsContext, allocator: *Allocator, bufs: []BufferMemory) void {
+fn destroyUniformBuffers(gc: GraphicsContext, allocator: Allocator, bufs: []BufferMemory) void {
     for (bufs) |b| {
         b.deinit(gc);
     }
@@ -1129,11 +1138,11 @@ fn createDescriptorPool(gc: GraphicsContext, framebuffers: []const vk.Framebuffe
     return try gc.vkd.createDescriptorPool(gc.dev, dpci, null);
 }
 
-pub fn createTextureImage(gc: GraphicsContext, pool: vk.CommandPool) !TextureImage {
+pub fn createTextureImage(gc: GraphicsContext, pool: vk.CommandPool, path: []const u8) !TextureImage {
     var tex_width: i32 = 0;
     var tex_height: i32 = 0;
     var tex_channels: i32 = 0;
-    const pixels = c.stbi_load("assets/texture.jpg", &tex_width, &tex_height, &tex_channels, c.STBI_rgb_alpha);
+    const pixels = c.stbi_load(@ptrCast([*c]const u8, path), &tex_width, &tex_height, &tex_channels, c.STBI_rgb_alpha);
     const size = @intCast(vk.DeviceSize, tex_width) * @intCast(vk.DeviceSize, tex_height) * 4;
     assert(pixels != null and size > 0);
     defer c.stbi_image_free(pixels);
@@ -1313,4 +1322,205 @@ fn createDepthResources(gc: GraphicsContext, extent: vk.Extent2D) !DepthImage {
     return depth_image;
     // TODO: Explicitly transitioning the depth image
     // try transitionImageLayout(gc, pool, image.image, .r8g8b8a8_srgb, .@"undefined", .transfer_dst_optimal);
+}
+fn loadScene(
+    arena: *std.mem.Allocator,
+    all_meshes: *std.ArrayList(Mesh),
+    all_vertices: *std.ArrayList(Vertex),
+    all_indices: *std.ArrayList(u32),
+    path: []const u8,
+) void {
+    var indices = std.ArrayList(u32).init(arena);
+    var positions = std.ArrayList(Vec3).init(arena);
+    // var normals = std.ArrayList(Vec3).init(arena);
+    var texcoords0 = std.ArrayList(Vec2).init(arena);
+    // var tangents = std.ArrayList(Vec4).init(arena);
+
+    const data = parseAndLoadGltfFile(path);
+    defer c.cgltf_free(data);
+
+    const num_meshes = @intCast(u32, data.meshes_count);
+    var mesh_index: u32 = 0;
+
+    while (mesh_index < num_meshes) : (mesh_index += 1) {
+        const num_prims = @intCast(u32, data.meshes[mesh_index].primitives_count);
+        var prim_index: u32 = 0;
+
+        while (prim_index < num_prims) : (prim_index += 1) {
+            const pre_indices_len = indices.items.len;
+            const pre_positions_len = positions.items.len;
+
+            appendMeshPrimitive(data, mesh_index, prim_index, &indices, &positions, null, &texcoords0);
+
+            all_meshes.append(.{
+                .index_offset = @intCast(u32, pre_indices_len),
+                .vertex_offset = @intCast(u32, pre_positions_len),
+                .num_indices = @intCast(u32, indices.items.len - pre_indices_len),
+                .num_vertices = @intCast(u32, positions.items.len - pre_positions_len),
+            }) catch unreachable;
+        }
+    }
+
+    all_indices.ensureTotalCapacity(indices.items.len) catch unreachable;
+    for (indices.items) |index| {
+        all_indices.appendAssumeCapacity(index);
+    }
+
+    all_vertices.ensureTotalCapacity(positions.items.len) catch unreachable;
+    for (positions.items) |_, index| {
+        all_vertices.appendAssumeCapacity(.{
+            .pos = positions.items[index], // NOTE(mziulek): Sponza requires scaling.
+            // .normal = normals.items[index],
+            .tex_coord = texcoords0.items[index],
+            // .tangent = tangents.items[index],
+        });
+    }
+}
+
+fn parseAndLoadGltfFile(gltf_path: []const u8) *c.cgltf_data {
+    var data: *c.cgltf_data = undefined;
+    const options = std.mem.zeroes(c.cgltf_options);
+    // Parse.
+    {
+        const result = c.cgltf_parse_file(&options, gltf_path.ptr, @ptrCast([*c][*c]c.cgltf_data, &data));
+        assert(result == c.cgltf_result_success);
+    }
+    // Load.
+    {
+        const result = c.cgltf_load_buffers(&options, data, gltf_path.ptr);
+        assert(result == c.cgltf_result_success);
+    }
+    return data;
+}
+fn appendMeshPrimitive(
+    data: *c.cgltf_data,
+    mesh_index: u32,
+    prim_index: u32,
+    indices: *std.ArrayList(u32),
+    positions: *std.ArrayList(Vec3),
+    normals: ?*std.ArrayList(Vec3),
+    texcoords0: ?*std.ArrayList(Vec2),
+    // tangents: ?*std.ArrayList(Vec4),
+) void {
+    assert(mesh_index < data.meshes_count);
+    assert(prim_index < data.meshes[mesh_index].primitives_count);
+    const num_vertices: u32 = @intCast(u32, data.meshes[mesh_index].primitives[prim_index].attributes[0].data.*.count);
+    const num_indices: u32 = @intCast(u32, data.meshes[mesh_index].primitives[prim_index].indices.*.count);
+
+    // Indices.
+    {
+        indices.ensureTotalCapacity(indices.items.len + num_indices) catch unreachable;
+
+        const accessor = data.meshes[mesh_index].primitives[prim_index].indices;
+
+        assert(accessor.*.buffer_view != null);
+        assert(accessor.*.stride == accessor.*.buffer_view.*.stride or accessor.*.buffer_view.*.stride == 0);
+        std.log.info(
+            "stride: {}, count: {}, total: {}, size: {}",
+            .{ accessor.*.stride, accessor.*.count, accessor.*.stride * accessor.*.count, accessor.*.buffer_view.*.size },
+        );
+        assert((accessor.*.stride * accessor.*.count) == accessor.*.buffer_view.*.size);
+        assert(accessor.*.buffer_view.*.buffer.*.data != null);
+
+        const data_addr = @alignCast(4, @ptrCast([*]const u8, accessor.*.buffer_view.*.buffer.*.data) +
+            accessor.*.offset + accessor.*.buffer_view.*.offset);
+
+        if (accessor.*.stride == 1) {
+            assert(accessor.*.component_type == c.cgltf_component_type_r_8u);
+            const src = @ptrCast([*]const u8, data_addr);
+            var i: u32 = 0;
+            while (i < num_indices) : (i += 1) {
+                indices.appendAssumeCapacity(src[i]);
+            }
+        } else if (accessor.*.stride == 2) {
+            assert(accessor.*.component_type == c.cgltf_component_type_r_16u);
+            const src = @ptrCast([*]const u16, data_addr);
+            var i: u32 = 0;
+            while (i < num_indices) : (i += 1) {
+                indices.appendAssumeCapacity(src[i]);
+            }
+        } else if (accessor.*.stride == 4) {
+            assert(accessor.*.component_type == c.cgltf_component_type_r_32u);
+            const src = @ptrCast([*]const u32, data_addr);
+            var i: u32 = 0;
+            while (i < num_indices) : (i += 1) {
+                indices.appendAssumeCapacity(src[i]);
+            }
+        } else {
+            unreachable;
+        }
+    }
+
+    // Attributes.
+    {
+        positions.resize(positions.items.len + num_vertices) catch unreachable;
+        if (normals != null) normals.?.resize(normals.?.items.len + num_vertices) catch unreachable;
+        if (texcoords0 != null) texcoords0.?.resize(texcoords0.?.items.len + num_vertices) catch unreachable;
+        // if (tangents != null) tangents.?.resize(tangents.?.items.len + num_vertices) catch unreachable;
+
+        const num_attribs: u32 = @intCast(u32, data.meshes[mesh_index].primitives[prim_index].attributes_count);
+
+        var attrib_index: u32 = 0;
+        while (attrib_index < num_attribs) : (attrib_index += 1) {
+            const attrib = &data.meshes[mesh_index].primitives[prim_index].attributes[attrib_index];
+            const accessor = attrib.data;
+
+            assert(accessor.*.buffer_view != null);
+            std.log.info(
+                "stride: {}, count: {}, stride_offset: {}, total: {}, buffer_offset: {}, size: {}",
+                .{
+                    accessor.*.stride,
+                    accessor.*.count,
+                    accessor.*.offset,
+                    accessor.*.offset + accessor.*.stride * accessor.*.count,
+                    accessor.*.buffer_view.*.offset,
+                    accessor.*.buffer_view.*.size,
+                },
+            );
+            // std.log.info("{}", .{accessor.*});
+            // std.log.info("{}", .{accessor.*.buffer_view.*});
+
+            assert(accessor.*.stride == accessor.*.buffer_view.*.stride or accessor.*.buffer_view.*.stride == 0);
+            assert((accessor.*.stride * accessor.*.count) == accessor.*.buffer_view.*.size);
+            assert(accessor.*.buffer_view.*.buffer.*.data != null);
+
+            const data_addr = @ptrCast([*]const u8, accessor.*.buffer_view.*.buffer.*.data) +
+                accessor.*.offset + accessor.*.buffer_view.*.offset;
+
+            if (attrib.*.type == c.cgltf_attribute_type_position) {
+                assert(accessor.*.type == c.cgltf_type_vec3);
+                assert(accessor.*.component_type == c.cgltf_component_type_r_32f);
+                @memcpy(
+                    @ptrCast([*]u8, &positions.items[positions.items.len - num_vertices]),
+                    data_addr,
+                    accessor.*.count * accessor.*.stride,
+                );
+            } else if (attrib.*.type == c.cgltf_attribute_type_normal and normals != null) {
+                assert(accessor.*.type == c.cgltf_type_vec3);
+                assert(accessor.*.component_type == c.cgltf_component_type_r_32f);
+                @memcpy(
+                    @ptrCast([*]u8, &normals.?.items[normals.?.items.len - num_vertices]),
+                    data_addr,
+                    accessor.*.count * accessor.*.stride,
+                );
+            } else if (attrib.*.type == c.cgltf_attribute_type_texcoord and texcoords0 != null) {
+                assert(accessor.*.type == c.cgltf_type_vec2);
+                assert(accessor.*.component_type == c.cgltf_component_type_r_32f);
+                @memcpy(
+                    @ptrCast([*]u8, &texcoords0.?.items[texcoords0.?.items.len - num_vertices]),
+                    data_addr,
+                    accessor.*.count * accessor.*.stride,
+                );
+            }
+            // else if (attrib.*.type == c.cgltf_attribute_type_tangent and tangents != null) {
+            //     assert(accessor.*.type == c.cgltf_type_vec4);
+            //     assert(accessor.*.component_type == c.cgltf_component_type_r_32f);
+            //     @memcpy(
+            //         @ptrCast([*]u8, &tangents.?.items[tangents.?.items.len - num_vertices]),
+            //         data_addr,
+            //         accessor.*.count * accessor.*.stride,
+            //     );
+            // }
+        }
+    }
 }
