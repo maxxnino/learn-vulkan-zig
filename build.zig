@@ -76,6 +76,7 @@ pub const ResourceGenStep = struct {
         try cwd.writeFile(self.output_file.path.?, self.resources.items);
     }
 };
+
 pub fn linkGlfw(b: *LibExeObjStep) void {
     const glfw = b.builder.addStaticLibrary("glfw", null);
     const glfw_path = "./external/glfw/";
@@ -111,14 +112,6 @@ pub fn linkGlfw(b: *LibExeObjStep) void {
     b.linkLibrary(glfw);
 }
 
-pub fn linkStbImage(b: *LibExeObjStep) void {
-    const stb_image = b.builder.addStaticLibrary("stb_image", null);
-    stb_image.addCSourceFile("external/stb_image.c", &.{});
-    stb_image.linkLibC();
-    b.addIncludeDir("external");
-    b.linkLibrary(stb_image);
-}
-
 pub fn build(b: *Builder) void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
@@ -129,8 +122,12 @@ pub fn build(b: *Builder) void {
     triangle_exe.install();
     triangle_exe.linkLibC();
     triangle_exe.linkSystemLibrary("gdi32");
+
+    const external = "./external";
+    triangle_exe.addIncludeDir(external);
     linkGlfw(triangle_exe);
-    linkStbImage(triangle_exe);
+    triangle_exe.addCSourceFile(external ++ "/cgltf.c", &.{"-std=c99"});
+    triangle_exe.addCSourceFile(external ++ "/stb_image.c", &.{"-std=c99"});
 
     const vk_sdk_path = b.option([]const u8, "vulkan-sdk", "Path to vulkan sdk");
     const gen = if (vk_sdk_path) |path|
@@ -153,7 +150,7 @@ pub fn build(b: *Builder) void {
     };
 
     triangle_exe.addPackage(res);
-    const zalgebra = Pkg{ .name = "zalgebra", .path = .{ .path = "zalgebra/src/main.zig" }, .dependencies = null };
+    const zalgebra = Pkg{ .name = "zalgebra", .path = .{ .path = "external/zalgebra/src/main.zig" }, .dependencies = null };
     triangle_exe.addPackage(zalgebra);
 
     const triangle_run_cmd = triangle_exe.run();
