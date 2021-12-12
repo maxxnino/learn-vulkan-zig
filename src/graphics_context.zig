@@ -117,7 +117,7 @@ pub const GraphicsContext = struct {
     graphics_queue: Queue,
     present_queue: Queue,
 
-    pub fn init(allocator: *Allocator, app_name: [*:0]const u8, window: *c.GLFWwindow) !GraphicsContext {
+    pub fn init(allocator: Allocator, app_name: [*:0]const u8, window: *c.GLFWwindow) !GraphicsContext {
         var self: GraphicsContext = undefined;
         self.vkb = try BaseDispatch.load(c.glfwGetInstanceProcAddress);
 
@@ -282,7 +282,7 @@ const QueueAllocation = struct {
 fn pickPhysicalDevice(
     vki: InstanceDispatch,
     instance: vk.Instance,
-    allocator: *Allocator,
+    allocator: Allocator,
     surface: vk.SurfaceKHR,
 ) !DeviceCandidate {
     var device_count: u32 = undefined;
@@ -305,7 +305,7 @@ fn pickPhysicalDevice(
 fn checkSuitable(
     vki: InstanceDispatch,
     pdev: vk.PhysicalDevice,
-    allocator: *Allocator,
+    allocator: Allocator,
     surface: vk.SurfaceKHR,
 ) !?DeviceCandidate {
     const props = vki.getPhysicalDeviceProperties(pdev);
@@ -329,7 +329,7 @@ fn checkSuitable(
     return null;
 }
 
-fn allocateQueues(vki: InstanceDispatch, pdev: vk.PhysicalDevice, allocator: *Allocator, surface: vk.SurfaceKHR) !?QueueAllocation {
+fn allocateQueues(vki: InstanceDispatch, pdev: vk.PhysicalDevice, allocator: Allocator, surface: vk.SurfaceKHR) !?QueueAllocation {
     var family_count: u32 = undefined;
     vki.getPhysicalDeviceQueueFamilyProperties(pdev, &family_count, null);
 
@@ -375,7 +375,7 @@ fn checkSurfaceSupport(vki: InstanceDispatch, pdev: vk.PhysicalDevice, surface: 
 fn checkExtensionSupport(
     vki: InstanceDispatch,
     pdev: vk.PhysicalDevice,
-    allocator: *Allocator,
+    allocator: Allocator,
 ) !bool {
     var count: u32 = undefined;
     _ = try vki.enumerateDeviceExtensionProperties(pdev, null, &count, null);
