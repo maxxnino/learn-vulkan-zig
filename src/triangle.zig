@@ -59,97 +59,44 @@ const UniformBufferObject = struct {
     proj: Mat4,
 };
 
-fn setViewDirection(position: Vec3, direction: Vec3, up: Vec3) Mat4 {
-    const w = direction.norm();
-    const u = w.cross(up).norm();
-    const v = w.cross(u);
-
-    var view = Mat4.identity();
-    view.data[0][0] = u.x;
-    view.data[1][0] = u.y;
-    view.data[2][0] = u.z;
-    view.data[0][1] = v.x;
-    view.data[1][1] = v.y;
-    view.data[2][1] = v.z;
-    view.data[0][2] = w.x;
-    view.data[1][2] = w.y;
-    view.data[2][2] = w.z;
-    view.data[3][0] = u.dot(position);
-    view.data[3][1] = v.dot(position);
-    view.data[3][2] = w.dot(position);
-    return view;
-}
-
-fn setViewTarget(position: Vec3, target: Vec3, up: Vec3) Mat4 {
-    return setViewDirection(position, target.sub(position), up);
-}
-
 const CameraPos = struct {
-    rotation: Vec3,
-    translation: Vec3,
-    xpos: f64,
-    ypos: f64,
-    const look_speed: f32 = 1.5;
-    const move_speed: f32 = 8;
+    pitch: f32,
+    yaw: f32,
+    pos: Vec3,
+    quat: za.Quat = za.Quat.zero(),
+    const rotate_speed: f32 = 85;
+    const move_speed: f32 = 12;
 
-    fn moveInPlaneXZ(self: *CameraPos, window: *c.GLFWwindow, dt: f32) void {
+    pub fn getMatrix(self: *CameraPos) Mat4 {
+        const target = self.quat.rotateVec(Vec3.forward());
+        return za.lookAt(self.pos, self.pos.add(target), Vec3.up());
+    }
+
+    fn moveCamera(self: *CameraPos, window: *c.GLFWwindow, dt: f32) void {
         var x_dir: f32 = 0;
         var y_dir: f32 = 0;
-        if (c.glfwGetKey(window, c.GLFW_KEY_J) == c.GLFW_PRESS) x_dir -= 1;
-        if (c.glfwGetKey(window, c.GLFW_KEY_K) == c.GLFW_PRESS) x_dir += 1;
-        if (c.glfwGetKey(window, c.GLFW_KEY_H) == c.GLFW_PRESS) y_dir += 1;
-        if (c.glfwGetKey(window, c.GLFW_KEY_L) == c.GLFW_PRESS) y_dir -= 1;
-        var rotate = Vec3.new(x_dir, y_dir, 0);
-
-        if (rotate.dot(rotate) > std.math.epsilon(f32)) {
-            self.rotation = self.rotation.add(rotate.norm().scale(look_speed * dt));
-        }
+        if (c.glfwGetKey(window, c.GLFW_KEY_J) == c.GLFW_PRESS) y_dir += dt;
+        if (c.glfwGetKey(window, c.GLFW_KEY_K) == c.GLFW_PRESS) y_dir -= dt;
+        if (c.glfwGetKey(window, c.GLFW_KEY_H) == c.GLFW_PRESS) x_dir += dt;
+        if (c.glfwGetKey(window, c.GLFW_KEY_L) == c.GLFW_PRESS) x_dir -= dt;
 
         // limit pitch values between about +/- 85ish degrees
-        self.rotation.x = std.math.mod(f32, self.rotation.x, 2 * std.math.pi) catch unreachable;
-        self.rotation.y = std.math.mod(f32, self.rotation.y, 2 * std.math.pi) catch unreachable;
-
-        const yaw = self.rotation.y;
-        const forward_dir = Vec3.new(std.math.sin(yaw), 0, std.math.cos(yaw));
-        const right_dir = Vec3.new(forward_dir.z, 0, -forward_dir.x);
-        const up_dir = Vec3.up();
+        self.yaw += x_dir * rotate_speed;
+        self.pitch += y_dir * rotate_speed;
+        self.pitch = std.math.clamp(self.pitch, -85, 85);
+        self.yaw = std.math.mod(f32, self.yaw, 360) catch unreachable;
 
         var move_dir = Vec3.zero();
-        if (c.glfwGetKey(window, c.GLFW_KEY_W) == c.GLFW_PRESS) move_dir = move_dir.add(forward_dir);
-        if (c.glfwGetKey(window, c.GLFW_KEY_S) == c.GLFW_PRESS) move_dir = move_dir.sub(forward_dir);
-        if (c.glfwGetKey(window, c.GLFW_KEY_A) == c.GLFW_PRESS) move_dir = move_dir.add(right_dir);
-        if (c.glfwGetKey(window, c.GLFW_KEY_D) == c.GLFW_PRESS) move_dir = move_dir.sub(right_dir);
-        if (c.glfwGetKey(window, c.GLFW_KEY_SPACE) == c.GLFW_PRESS) move_dir = move_dir.add(up_dir);
-        if (c.glfwGetKey(window, c.GLFW_KEY_LEFT_CONTROL) == c.GLFW_PRESS) move_dir = move_dir.sub(up_dir);
+        if (c.glfwGetKey(window, c.GLFW_KEY_W) == c.GLFW_PRESS) move_dir.z += dt;
+        if (c.glfwGetKey(window, c.GLFW_KEY_S) == c.GLFW_PRESS) move_dir.z -= dt;
+        if (c.glfwGetKey(window, c.GLFW_KEY_A) == c.GLFW_PRESS) move_dir.x += dt;
+        if (c.glfwGetKey(window, c.GLFW_KEY_D) == c.GLFW_PRESS) move_dir.x -= dt;
+        if (c.glfwGetKey(window, c.GLFW_KEY_SPACE) == c.GLFW_PRESS) move_dir.y += dt;
+        if (c.glfwGetKey(window, c.GLFW_KEY_LEFT_CONTROL) == c.GLFW_PRESS) move_dir.y -= dt;
 
-        if (move_dir.dot(move_dir) > std.math.epsilon(f32)) {
-            self.translation = self.translation.add(move_dir.norm().scale(move_speed * dt));
-        }
-    }
-    fn getViewYXZ(position: Vec3, rotation: Vec3) Mat4 {
-        const c3 = std.math.cos(rotation.z);
-        const s3 = std.math.sin(rotation.z);
-        const c2 = std.math.cos(rotation.x);
-        const s2 = std.math.sin(rotation.x);
-        const c1 = std.math.cos(rotation.y);
-        const s1 = std.math.sin(rotation.y);
-        const u = Vec3.new((c1 * c3 + s1 * s2 * s3), (c2 * s3), (c1 * s2 * s3 - c3 * s1));
-        const v = Vec3.new((c3 * s1 * s2 - c1 * s3), (c2 * c3), (c1 * c3 * s2 + s1 * s3));
-        const w = Vec3.new((c2 * s1), (-s2), (c1 * c2));
-        var view_matrix = Mat4.identity();
-        view_matrix.data[0][0] = u.x;
-        view_matrix.data[1][0] = u.y;
-        view_matrix.data[2][0] = u.z;
-        view_matrix.data[0][1] = v.x;
-        view_matrix.data[1][1] = v.y;
-        view_matrix.data[2][1] = v.z;
-        view_matrix.data[0][2] = w.x;
-        view_matrix.data[1][2] = w.y;
-        view_matrix.data[2][2] = w.z;
-        view_matrix.data[3][0] = u.dot(position);
-        view_matrix.data[3][1] = v.dot(position);
-        view_matrix.data[3][2] = w.dot(position);
-        return view_matrix;
+        self.quat = za.Quat.fromEulerAngle(Vec3.new(self.pitch, self.yaw, 0));
+        const translation = self.quat.rotateVec(move_dir.scale(move_speed));
+        self.pos = self.pos.add(translation);
     }
 };
 
@@ -164,7 +111,7 @@ const BufferMemory = struct {
         properties: vk.MemoryPropertyFlags,
     ) !BufferMemory {
         var bm: BufferMemory = undefined;
-        bm.buffer = try gc.vkd.createBuffer(gc.dev, .{
+        bm.buffer = try gc.vkd.createBuffer(gc.dev, &.{
             .flags = .{},
             .size = size,
             .usage = usage,
@@ -218,7 +165,7 @@ const TextureImage = struct {
             .p_queue_family_indices = undefined,
             .initial_layout = .@"undefined",
         };
-        bm.image = try gc.vkd.createImage(gc.dev, ici, null);
+        bm.image = try gc.vkd.createImage(gc.dev, &ici, null);
         errdefer gc.vkd.destroyImage(gc.dev, bm.image, null);
 
         const mem_reqs = gc.vkd.getImageMemoryRequirements(gc.dev, bm.image);
@@ -227,7 +174,7 @@ const TextureImage = struct {
 
         try gc.vkd.bindImageMemory(gc.dev, bm.image, bm.memory, 0);
 
-        bm.view = try gc.vkd.createImageView(gc.dev, .{
+        bm.view = try gc.vkd.createImageView(gc.dev, &.{
             .flags = .{},
             .image = bm.image,
             .view_type = .@"2d",
@@ -261,7 +208,7 @@ const TextureImage = struct {
             .border_color = .int_opaque_black,
             .unnormalized_coordinates = vk.FALSE,
         };
-        bm.sampler = try gc.vkd.createSampler(gc.dev, sci, null);
+        bm.sampler = try gc.vkd.createSampler(gc.dev, &sci, null);
         return bm;
     }
 
@@ -306,7 +253,7 @@ const DepthImage = struct {
             .p_queue_family_indices = undefined,
             .initial_layout = .@"undefined",
         };
-        bm.image = try gc.vkd.createImage(gc.dev, ici, null);
+        bm.image = try gc.vkd.createImage(gc.dev, &ici, null);
         errdefer gc.vkd.destroyImage(gc.dev, bm.image, null);
 
         const mem_reqs = gc.vkd.getImageMemoryRequirements(gc.dev, bm.image);
@@ -315,7 +262,7 @@ const DepthImage = struct {
 
         try gc.vkd.bindImageMemory(gc.dev, bm.image, bm.memory, 0);
 
-        bm.view = try gc.vkd.createImageView(gc.dev, .{
+        bm.view = try gc.vkd.createImageView(gc.dev, &.{
             .flags = .{},
             .image = bm.image,
             .view_type = .@"2d",
@@ -382,7 +329,7 @@ pub fn main() !void {
     const descriptor_layout = try createDescriptorSetLayout(gc);
     defer gc.vkd.destroyDescriptorSetLayout(gc.dev, descriptor_layout, null);
 
-    const pipeline_layout = try gc.vkd.createPipelineLayout(gc.dev, .{
+    const pipeline_layout = try gc.vkd.createPipelineLayout(gc.dev, &.{
         .flags = .{},
         .set_layout_count = 1,
         .p_set_layouts = @ptrCast([*]const vk.DescriptorSetLayout, &descriptor_layout),
@@ -400,7 +347,7 @@ pub fn main() !void {
     var framebuffers = try createFramebuffers(&gc, allocator, render_pass, swapchain, depth_image);
     defer destroyFramebuffers(&gc, allocator, framebuffers);
 
-    const pool = try gc.vkd.createCommandPool(gc.dev, .{
+    const pool = try gc.vkd.createCommandPool(gc.dev, &.{
         .flags = .{},
         .queue_family_index = gc.graphics_queue.family,
     }, null);
@@ -413,9 +360,9 @@ pub fn main() !void {
     var vertices = std.ArrayList(Vertex).init(allocator);
     var meshs = std.ArrayList(Mesh).init(allocator);
     defer vertices.deinit();
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    loadScene(&arena.allocator, &meshs, &vertices, &indices, model_path);
-    arena.deinit();
+    // var arena = std.heap.ArenaAllocator.init(allocator);
+    loadScene(allocator, &meshs, &vertices, &indices, model_path);
+    // arena.deinit();
 
     const vertex_buffer = try createVertexBuffer(gc, pool, vertices.items);
     defer vertex_buffer.deinit(gc);
@@ -454,26 +401,25 @@ pub fn main() !void {
         framebuffers,
         pipeline_layout,
         descriptor_sets,
-        indices.items,
+        meshs.items,
     );
     defer destroyCommandBuffers(&gc, pool, allocator, cmdbufs);
     var update_timer = try std.time.Timer.start();
     var camera = CameraPos{
-        .rotation = Vec3.zero(),
-        .translation = Vec3.new(0, 0, -2),
-        .xpos = 0,
-        .ypos = 0,
+        .pos = Vec3.new(0, 0, -2),
+        .pitch = 0,
+        .yaw = 0,
     };
     while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) {
         const dt = @intToFloat(f32, update_timer.lap()) / @intToFloat(f32, std.time.ns_per_s);
         const cmdbuf = cmdbufs[swapchain.image_index];
         const unibuf = unibufs[swapchain.image_index];
-        camera.moveInPlaneXZ(window, dt);
+        camera.moveCamera(window, dt);
         try updateUniformBuffer(
             gc,
             unibuf,
             swapchain.extent,
-            CameraPos.getViewYXZ(camera.translation, camera.rotation),
+            camera.getMatrix(),
         );
         //TODO: chapter 2 descriptor set
 
@@ -526,7 +472,7 @@ pub fn main() !void {
                 framebuffers,
                 pipeline_layout,
                 descriptor_sets,
-                indices.items,
+                meshs.items,
             );
         }
 
@@ -537,16 +483,16 @@ pub fn main() !void {
 }
 fn updateUniformBuffer(gc: GraphicsContext, buffer: BufferMemory, extent: vk.Extent2D, view: Mat4) !void {
     var proj = za.perspective(
-        45.0,
+        60.0,
         @intToFloat(f32, extent.width) / @intToFloat(f32, extent.height),
         0.1,
         100.0,
     );
+    proj.data[1][1] *= -1;
     const ubo = UniformBufferObject{
         .proj = proj,
         .view = view,
-        // .model = Mat4.identity().rotate(90, Vec3.new(0, 0, 1)),
-        .model = Mat4.identity().rotate(-90, Vec3.up()),
+        .model = Mat4.identity(),
     };
 
     {
@@ -644,12 +590,12 @@ fn createCommandBuffers(
     framebuffers: []vk.Framebuffer,
     pipeline_layout: vk.PipelineLayout,
     descriptor_sets: []vk.DescriptorSet,
-    indices: []const u32,
+    meshs: []const Mesh,
 ) ![]vk.CommandBuffer {
     const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
     errdefer allocator.free(cmdbufs);
 
-    try gc.vkd.allocateCommandBuffers(gc.dev, .{
+    try gc.vkd.allocateCommandBuffers(gc.dev, &.{
         .command_pool = pool,
         .level = .primary,
         .command_buffer_count = @truncate(u32, cmdbufs.len),
@@ -680,7 +626,7 @@ fn createCommandBuffers(
     };
 
     for (cmdbufs) |cmdbuf, i| {
-        try gc.vkd.beginCommandBuffer(cmdbuf, .{
+        try gc.vkd.beginCommandBuffer(cmdbuf, &.{
             .flags = .{},
             .p_inheritance_info = null,
         });
@@ -688,13 +634,15 @@ fn createCommandBuffers(
         gc.vkd.cmdSetViewport(cmdbuf, 0, 1, @ptrCast([*]const vk.Viewport, &viewport));
         gc.vkd.cmdSetScissor(cmdbuf, 0, 1, @ptrCast([*]const vk.Rect2D, &scissor));
 
-        gc.vkd.cmdBeginRenderPass(cmdbuf, .{
+        // This needs to be a separate definition - see https://github.com/ziglang/zig/issues/7627.
+        const render_area = vk.Rect2D{
+            .offset = .{ .x = 0, .y = 0 },
+            .extent = extent,
+        };
+        gc.vkd.cmdBeginRenderPass(cmdbuf, &.{
             .render_pass = render_pass,
             .framebuffer = framebuffers[i],
-            .render_area = .{
-                .offset = .{ .x = 0, .y = 0 },
-                .extent = extent,
-            },
+            .render_area = render_area,
             .clear_value_count = @truncate(u32, clear.len),
             .p_clear_values = @ptrCast([*]const vk.ClearValue, &clear),
         }, .@"inline");
@@ -713,7 +661,10 @@ fn createCommandBuffers(
             0,
             undefined,
         );
-        gc.vkd.cmdDrawIndexed(cmdbuf, @truncate(u32, indices.len), 1, 0, 0, 0);
+
+        for (meshs) |mesh| {
+            gc.vkd.cmdDrawIndexed(cmdbuf, mesh.num_indices, 1, mesh.index_offset, @intCast(i32, mesh.vertex_offset), 0);
+        }
         gc.vkd.cmdEndRenderPass(cmdbuf);
         try gc.vkd.endCommandBuffer(cmdbuf);
     }
@@ -749,7 +700,7 @@ fn createFramebuffers(
             swapchain.swap_images[i].view,
             depth_image.view,
         };
-        fb.* = try gc.vkd.createFramebuffer(gc.dev, .{
+        fb.* = try gc.vkd.createFramebuffer(gc.dev, &.{
             .flags = .{},
             .render_pass = render_pass,
             .attachment_count = @truncate(u32, attachments.len),
@@ -828,7 +779,7 @@ fn createRenderPass(gc: GraphicsContext, swapchain: Swapchain) !vk.RenderPass {
         .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
         .dependency_flags = .{},
     };
-    return try gc.vkd.createRenderPass(gc.dev, .{
+    return try gc.vkd.createRenderPass(gc.dev, &.{
         .flags = .{},
         .attachment_count = @truncate(u32, attachments.len),
         .p_attachments = @ptrCast([*]const vk.AttachmentDescription, &attachments),
@@ -844,14 +795,14 @@ fn createPipeline(
     layout: vk.PipelineLayout,
     render_pass: vk.RenderPass,
 ) !vk.Pipeline {
-    const vert = try gc.vkd.createShaderModule(gc.dev, .{
+    const vert = try gc.vkd.createShaderModule(gc.dev, &.{
         .flags = .{},
         .code_size = resources.triangle_vert.len,
         .p_code = @ptrCast([*]const u32, resources.triangle_vert),
     }, null);
     defer gc.vkd.destroyShaderModule(gc.dev, vert, null);
 
-    const frag = try gc.vkd.createShaderModule(gc.dev, .{
+    const frag = try gc.vkd.createShaderModule(gc.dev, &.{
         .flags = .{},
         .code_size = resources.triangle_frag.len,
         .p_code = @ptrCast([*]const u32, resources.triangle_frag),
@@ -915,7 +866,7 @@ fn createPipeline(
         .rasterizer_discard_enable = vk.FALSE,
         .polygon_mode = .fill,
         .cull_mode = .{ .back_bit = true },
-        .front_face = .clockwise,
+        .front_face = .counter_clockwise,
         .depth_bias_enable = vk.FALSE,
         .depth_bias_constant_factor = 0,
         .depth_bias_clamp = 0,
@@ -1021,7 +972,7 @@ fn createDescriptorSetLayout(gc: GraphicsContext) !vk.DescriptorSetLayout {
             .p_immutable_samplers = null,
         },
     };
-    return try gc.vkd.createDescriptorSetLayout(gc.dev, .{
+    return try gc.vkd.createDescriptorSetLayout(gc.dev, &.{
         .flags = .{},
         .binding_count = @truncate(u32, dslb.len),
         .p_bindings = @ptrCast([*]const vk.DescriptorSetLayoutBinding, &dslb),
@@ -1047,7 +998,7 @@ fn createDescriptorSets(
         .p_set_layouts = @ptrCast([*]const vk.DescriptorSetLayout, layouts),
     };
     var sets = try allocator.alloc(vk.DescriptorSet, size);
-    try gc.vkd.allocateDescriptorSets(gc.dev, dsai, sets.ptr);
+    try gc.vkd.allocateDescriptorSets(gc.dev, &dsai, sets.ptr);
 
     for (unibufs) |unibuf, i| {
         const dbi = vk.DescriptorBufferInfo{
@@ -1135,7 +1086,7 @@ fn createDescriptorPool(gc: GraphicsContext, framebuffers: []const vk.Framebuffe
         .pool_size_count = @truncate(u32, pool_size.len),
         .p_pool_sizes = @ptrCast([*]const vk.DescriptorPoolSize, &pool_size),
     };
-    return try gc.vkd.createDescriptorPool(gc.dev, dpci, null);
+    return try gc.vkd.createDescriptorPool(gc.dev, &dpci, null);
 }
 
 pub fn createTextureImage(gc: GraphicsContext, pool: vk.CommandPool, path: []const u8) !TextureImage {
@@ -1279,13 +1230,13 @@ fn beginSingleTimeCommand(
     pool: vk.CommandPool,
 ) !vk.CommandBuffer {
     var cmdbuf: vk.CommandBuffer = undefined;
-    try gc.vkd.allocateCommandBuffers(gc.dev, .{
+    try gc.vkd.allocateCommandBuffers(gc.dev, &.{
         .command_pool = pool,
         .level = .primary,
         .command_buffer_count = 1,
     }, @ptrCast([*]vk.CommandBuffer, &cmdbuf));
 
-    try gc.vkd.beginCommandBuffer(cmdbuf, .{
+    try gc.vkd.beginCommandBuffer(cmdbuf, &.{
         .flags = .{ .one_time_submit_bit = true },
         .p_inheritance_info = null,
     });
@@ -1324,7 +1275,7 @@ fn createDepthResources(gc: GraphicsContext, extent: vk.Extent2D) !DepthImage {
     // try transitionImageLayout(gc, pool, image.image, .r8g8b8a8_srgb, .@"undefined", .transfer_dst_optimal);
 }
 fn loadScene(
-    arena: *std.mem.Allocator,
+    arena: Allocator,
     all_meshes: *std.ArrayList(Mesh),
     all_vertices: *std.ArrayList(Vertex),
     all_indices: *std.ArrayList(u32),
@@ -1369,7 +1320,8 @@ fn loadScene(
     all_vertices.ensureTotalCapacity(positions.items.len) catch unreachable;
     for (positions.items) |_, index| {
         all_vertices.appendAssumeCapacity(.{
-            .pos = positions.items[index], // NOTE(mziulek): Sponza requires scaling.
+            // .pos = positions.items[index].scale(0.08), // NOTE(mziulek): Sponza requires scaling.
+            .pos = positions.items[index],
             // .normal = normals.items[index],
             .tex_coord = texcoords0.items[index],
             // .tangent = tangents.items[index],
@@ -1415,10 +1367,6 @@ fn appendMeshPrimitive(
 
         assert(accessor.*.buffer_view != null);
         assert(accessor.*.stride == accessor.*.buffer_view.*.stride or accessor.*.buffer_view.*.stride == 0);
-        std.log.info(
-            "stride: {}, count: {}, total: {}, size: {}",
-            .{ accessor.*.stride, accessor.*.count, accessor.*.stride * accessor.*.count, accessor.*.buffer_view.*.size },
-        );
         assert((accessor.*.stride * accessor.*.count) == accessor.*.buffer_view.*.size);
         assert(accessor.*.buffer_view.*.buffer.*.data != null);
 
@@ -1466,20 +1414,6 @@ fn appendMeshPrimitive(
             const accessor = attrib.data;
 
             assert(accessor.*.buffer_view != null);
-            std.log.info(
-                "stride: {}, count: {}, stride_offset: {}, total: {}, buffer_offset: {}, size: {}",
-                .{
-                    accessor.*.stride,
-                    accessor.*.count,
-                    accessor.*.offset,
-                    accessor.*.offset + accessor.*.stride * accessor.*.count,
-                    accessor.*.buffer_view.*.offset,
-                    accessor.*.buffer_view.*.size,
-                },
-            );
-            // std.log.info("{}", .{accessor.*});
-            // std.log.info("{}", .{accessor.*.buffer_view.*});
-
             assert(accessor.*.stride == accessor.*.buffer_view.*.stride or accessor.*.buffer_view.*.stride == 0);
             assert((accessor.*.stride * accessor.*.count) == accessor.*.buffer_view.*.size);
             assert(accessor.*.buffer_view.*.buffer.*.data != null);

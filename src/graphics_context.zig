@@ -1,16 +1,10 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const c = @import("c.zig");
-const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
-const required_device_extensions = [_][]const u8{
-    vk.extension_info.khr_swapchain.name,
-};
+const required_device_extensions = [_][]const u8{vk.extension_info.khr_swapchain.name};
 
-const validation_extensions = [_][]const u8{
-    "VK_LAYER_KHRONOS_validation"[0.. :0],
-};
 const BaseDispatch = vk.BaseWrapper(&.{
     .createInstance,
 });
@@ -132,14 +126,11 @@ pub const GraphicsContext = struct {
             .api_version = vk.API_VERSION_1_2,
         };
 
-        self.instance = try self.vkb.createInstance(.{
+        self.instance = try self.vkb.createInstance(&.{
             .flags = .{},
             .p_application_info = &app_info,
-            .enabled_layer_count = if (builtin.mode == .Debug) validation_extensions.len else 0,
-            .pp_enabled_layer_names = if (builtin.mode == .Debug) @ptrCast(
-                [*]const [*:0]const u8,
-                &validation_extensions,
-            ) else undefined,
+            .enabled_layer_count = 0,
+            .pp_enabled_layer_names = undefined,
             .enabled_extension_count = glfw_exts_count,
             .pp_enabled_extension_names = @ptrCast([*]const [*:0]const u8, glfw_exts),
         }, null);
@@ -186,12 +177,6 @@ pub const GraphicsContext = struct {
         return error.NoSuitableMemoryType;
     }
 
-    pub fn allocate(self: GraphicsContext, requirements: vk.MemoryRequirements, flags: vk.MemoryPropertyFlags) !vk.DeviceMemory {
-        return try self.vkd.allocateMemory(self.dev, .{
-            .allocation_size = requirements.size,
-            .memory_type_index = try self.findMemoryTypeIndex(requirements.memory_type_bits, flags),
-        }, null);
-    }
     pub fn findSupportedFormat(
         self: GraphicsContext,
         candidates: []const vk.Format,
@@ -208,6 +193,13 @@ pub const GraphicsContext = struct {
             }
         }
         return null;
+    }
+
+    pub fn allocate(self: GraphicsContext, requirements: vk.MemoryRequirements, flags: vk.MemoryPropertyFlags) !vk.DeviceMemory {
+        return try self.vkd.allocateMemory(self.dev, &.{
+            .allocation_size = requirements.size,
+            .memory_type_index = try self.findMemoryTypeIndex(requirements.memory_type_bits, flags),
+        }, null);
     }
 };
 
@@ -254,7 +246,7 @@ fn initializeCandidate(vki: InstanceDispatch, candidate: DeviceCandidate) !vk.De
     else
         2;
 
-    return try vki.createDevice(candidate.pdev, .{
+    return try vki.createDevice(candidate.pdev, &.{
         .flags = .{},
         .queue_create_info_count = queue_count,
         .p_queue_create_infos = &qci,
@@ -262,9 +254,7 @@ fn initializeCandidate(vki: InstanceDispatch, candidate: DeviceCandidate) !vk.De
         .pp_enabled_layer_names = undefined,
         .enabled_extension_count = required_device_extensions.len,
         .pp_enabled_extension_names = @ptrCast([*]const [*:0]const u8, &required_device_extensions),
-        .p_enabled_features = &.{
-            .sampler_anisotropy = vk.TRUE,
-        },
+        .p_enabled_features = null,
     }, null);
 }
 
